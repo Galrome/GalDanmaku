@@ -18,16 +18,26 @@ public sealed class DanmakuEngine
 
     public IReadOnlyList<DanmakuItem> Items => _readOnlyItems;
     public double LineHeight => _settings.FontSize * 1.6;
+    public bool CanFit(StoredDanmaku comment)
+    {
+        ArgumentNullException.ThrowIfNull(comment);
+        return _width > 0 && comment.FontSize * 1.6 + 2 * EdgePadding <= _height * _settings.AreaFraction;
+    }
 
     public void Configure(DanmakuSettings settings, double width, double height)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ValidateNonNegativeFinite(width, nameof(width));
         ValidateNonNegativeFinite(height, nameof(height));
-        if (width != _width || height != _height || settings.FontSize != _settings.FontSize ||
-            settings.AreaFraction != _settings.AreaFraction)
+        if (width != _width || height != _height || settings.AreaFraction != _settings.AreaFraction)
         {
             Clear();
+        }
+        else if (settings.FontSize != _settings.FontSize)
+        {
+            // Stored entries own their font and measured geometry; only default-font samples become stale.
+            _items.RemoveAll(item => item.UsesDefaultFontSize);
+            _nextLane = 0;
         }
 
         _settings = settings;
@@ -54,12 +64,46 @@ public sealed class DanmakuEngine
                 continue;
             }
 
-            _items.Add(new DanmakuItem(text, _width, y, width));
+            _items.Add(new DanmakuItem(text, _width, y, width, _settings.FontSize, "#FFFFFF", usesDefaultFontSize: true));
             _nextLane = (lane + 1) % lanes;
             return true;
         }
 
         return false;
+    }
+
+    public bool TryAdd(StoredDanmaku comment, double width)
+    {
+        ArgumentNullException.ThrowIfNull(comment);
+        ValidateNonNegativeFinite(width, nameof(width));
+        if (width == 0 || _width == 0 || _items.Count >= MaximumComments)
+        {
+            return false;
+        }
+
+        double height = comment.FontSize * 1.6;
+        double y = EdgePadding;
+        // Vertical intervals allow persisted comments of different sizes to share the viewport safely.
+        foreach (DanmakuItem item in _items.Where(item => item.X + item.Width + CommentGap > _width).OrderBy(item => item.Y))
+        {
+            if (y + height <= item.Y)
+            {
+                break;
+            }
+
+            if (y < item.Y + item.FontSize * 1.6)
+            {
+                y = item.Y + item.FontSize * 1.6;
+            }
+        }
+
+        if (y + height + EdgePadding > _height * _settings.AreaFraction)
+        {
+            return false;
+        }
+
+        _items.Add(new DanmakuItem(comment.Text, _width, y, width, comment.FontSize, comment.Color, usesDefaultFontSize: false));
+        return true;
     }
 
     public void Advance(double elapsedSeconds)

@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/GalDanmaku.App/GalDanmaku.App.csproj" />
     <Project Path="src/GalDanmaku.Core/GalDanmaku.Core.csproj" />
+    <Project Path="src/GalDanmaku.Storage/GalDanmaku.Storage.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/GalDanmaku.Tests/GalDanmaku.Tests.csproj" />

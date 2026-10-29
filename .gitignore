@@ -6,6 +6,10 @@
 *.suo
 TestResults/
 *.log
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
 /README.md
 /docs/
 /assets/

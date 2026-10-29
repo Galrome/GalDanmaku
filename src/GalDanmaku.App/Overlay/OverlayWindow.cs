@@ -10,12 +10,14 @@ namespace GalDanmaku.App.Overlay;
 
 public sealed class OverlayWindow : Window
 {
-    private readonly OverlayRenderer _renderer = new();
+    private readonly OverlayRenderer _renderer;
+    private bool _playbackEnabled;
     private HwndSource? _source;
     private nint _handle;
 
-    public OverlayWindow()
+    public OverlayWindow(NodePlayback playback)
     {
+        _renderer = new OverlayRenderer(playback);
         Title = "GalDanmaku Overlay";
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
@@ -36,6 +38,25 @@ public sealed class OverlayWindow : Window
         set => _renderer.Settings = value;
     }
 
+    public bool PlaybackEnabled
+    {
+        get => _playbackEnabled;
+        set
+        {
+            _playbackEnabled = value;
+            if (value && IsVisible)
+            {
+                _renderer.Start();
+            }
+            else
+            {
+                _renderer.Stop();
+            }
+        }
+    }
+
+    public void ResetVisuals() => _renderer.ResetVisuals();
+
     public void Follow(ClientBounds bounds)
     {
         _handle = new WindowInteropHelper(this).EnsureHandle();
@@ -47,7 +68,10 @@ public sealed class OverlayWindow : Window
             Position(bounds);
         }
 
-        _renderer.Start();
+        if (PlaybackEnabled)
+        {
+            _renderer.Start();
+        }
     }
 
     public void Suspend()

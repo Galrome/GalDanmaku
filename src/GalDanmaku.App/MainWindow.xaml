@@ -3,7 +3,7 @@
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  Title="GalDanmaku"
-                 Width="780" Height="730" MinWidth="640" MinHeight="620"
+                 Width="800" Height="900" MinWidth="640" MinHeight="620"
                  WindowStartupLocation="CenterScreen"
                  ExtendsContentIntoTitleBar="True"
                  Background="{DynamicResource ApplicationBackgroundBrush}">
@@ -16,7 +16,7 @@
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
       <StackPanel Margin="28,16,28,24">
         <TextBlock Text="让故事多一层共鸣" FontSize="26" FontWeight="SemiBold" />
-        <TextBlock Text="选择窗口，预览属于你的弹幕。" Margin="0,6,0,22" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+        <TextBlock Text="选择窗口，在模拟剧情节点保存与重播本地弹幕。" Margin="0,6,0,22" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
 
         <Border Padding="18" CornerRadius="10" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
           <StackPanel>
@@ -49,7 +49,46 @@
           </StackPanel>
         </Border>
 
-        <TextBlock Text="弹幕外观" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,14" />
+        <Border Padding="18" Margin="0,0,0,20" CornerRadius="10" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+          <StackPanel>
+            <TextBlock Text="本地弹幕 · 模拟游戏" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12" />
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <ComboBox x:Name="NodeComboBox" AutomationProperties.AutomationId="NodeComboBox" AutomationProperties.Name="模拟节点"
+                        ItemsSource="{Binding Nodes}" SelectedItem="{Binding SelectedNode}" DisplayMemberPath="Label"
+                        IsEnabled="{Binding IsLocalIdle}" MinWidth="180" HorizontalAlignment="Left" />
+              <ui:Button x:Name="ReplayNodeButton" AutomationProperties.AutomationId="ReplayNodeButton" Grid.Column="1"
+                         Content="重播 / 重新加载" Command="{Binding ReplayCommand}" />
+            </Grid>
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,10">
+              <TextBlock x:Name="SavedCountText" AutomationProperties.AutomationId="SavedCountText" Text="{Binding SavedCount, StringFormat=已保存 {0} 条}" Margin="0,0,18,0" />
+              <TextBlock x:Name="NodeTimeText" AutomationProperties.AutomationId="NodeTimeText" Text="{Binding NodeTime}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+            <TextBox x:Name="CommentInput" AutomationProperties.AutomationId="CommentInput" AutomationProperties.Name="弹幕内容"
+                     Text="{Binding DraftText, UpdateSourceTrigger=PropertyChanged}" MaxLength="500" IsEnabled="{Binding IsLocalIdle}"
+                     MinHeight="40" VerticalContentAlignment="Center" />
+            <Grid Margin="0,10,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <ComboBox x:Name="CommentColorComboBox" AutomationProperties.AutomationId="CommentColorComboBox" AutomationProperties.Name="弹幕颜色"
+                        ItemsSource="{Binding Colors}" SelectedItem="{Binding SelectedColor}" DisplayMemberPath="Label" Width="110" IsEnabled="{Binding IsLocalIdle}" />
+              <TextBlock Grid.Column="1" Text="最多 500 字 · 自动保存到本机" Margin="12,0,8,0" VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+              <ui:Button x:Name="SendCommentButton" AutomationProperties.AutomationId="SendCommentButton" Grid.Column="2"
+                         Content="发送弹幕" Appearance="Primary" Command="{Binding SendCommand}" />
+            </Grid>
+            <TextBlock x:Name="LocalStatusText" AutomationProperties.AutomationId="LocalStatusText" Text="{Binding LocalStatus}"
+                       Margin="0,12,0,0" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+          </StackPanel>
+        </Border>
+
+        <TextBlock Text="弹幕外观" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,6" />
+        <TextBlock Text="字号与颜色应用于新发送的弹幕；已保存弹幕保留原样式。" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
         <Grid>
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="105" />
@@ -76,6 +115,7 @@
                     ItemsSource="{Binding Areas}" SelectedItem="{Binding SelectedArea}" DisplayMemberPath="Label" HorizontalAlignment="Left" Width="180" VerticalAlignment="Center" />
         </Grid>
         <TextBlock Margin="0,18,0,0" Text="仅在目标处于前台时显示 · 最小化时自动隐藏 · 支持窗口化与无边框模式" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+        <TextBlock Margin="0,6,0,0" Text="区域太小时会跳过无法容纳的弹幕；扩大区域后可重播。" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
       </StackPanel>
     </ScrollViewer>
   </Grid>
