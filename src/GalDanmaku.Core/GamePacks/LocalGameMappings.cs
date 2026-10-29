@@ -134,15 +134,15 @@ public sealed class LocalGameMappings
 
     // Caller supplies an app-owned destination. An existing invalid file is never overwritten.
     public static async Task SaveConfirmationAsync(string sourcePath, string destinationPath, LocalGameMapping confirmation,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? expectedGameId = null)
     {
         await SaveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try { await SaveConfirmationCoreAsync(sourcePath, destinationPath, confirmation, cancellationToken).ConfigureAwait(false); }
+        try { await SaveConfirmationCoreAsync(sourcePath, destinationPath, confirmation, cancellationToken, expectedGameId).ConfigureAwait(false); }
         finally { SaveGate.Release(); }
     }
 
     private static async Task SaveConfirmationCoreAsync(string sourcePath, string destinationPath, LocalGameMapping confirmation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string? expectedGameId)
     {
         LocalGameMappings current;
         try { current = await LoadAsync(sourcePath, cancellationToken).ConfigureAwait(false); }
@@ -162,12 +162,16 @@ public sealed class LocalGameMappings
             current = new(merged.AsReadOnly());
         }
         LocalGameMatch pathMatch = current.MatchExact(confirmation.ExecutablePath);
-        LocalGameMatch sourceMatch = confirmation.ProviderId is not null && confirmation.SourceGameId is not null
-            ? current.MatchSource(confirmation.ProviderId, confirmation.SourceGameId)
-            : new(LocalGameMatchStatus.Unknown, null, "");
-        foreach (LocalGameMatch match in new[] { pathMatch, sourceMatch })
-            if (match.Status == LocalGameMatchStatus.Ambiguous || match.Game is { } game && game.RequiredGamePackId != confirmation.RequiredGamePackId)
-                throw new InvalidDataException("已确认的身份存在冲突；不会覆盖或改指向其他 GameId。");
+        if (expectedGameId is not null && (pathMatch.Game is null || pathMatch.Game.RequiredGamePackId != expectedGameId))
+            throw new InvalidDataException("原关联已变化，请重新识别后再发起重新关联。");
+        if (pathMatch.Status == LocalGameMatchStatus.Ambiguous || expectedGameId is null
+            && pathMatch.Game is { } game && game.RequiredGamePackId != confirmation.RequiredGamePackId)
+            throw new InvalidDataException("已确认的身份存在冲突；不会覆盖或改指向其他 GameId。");
+        // Explicit reassociation affects this installation only, never other paths sharing the UID.
+        if (confirmation.ProviderId is not null && current._games.Any(saved => saved.ProviderId == confirmation.ProviderId
+            && saved.SourceGameId == confirmation.SourceGameId && !PathsEqual(saved.ExecutablePath, confirmation.ExecutablePath)
+            && saved.RequiredGamePackId != confirmation.RequiredGamePackId))
+            throw new InvalidDataException("同一来源 UID 在其他安装路径上关联了不同 GameId，未修改关联。");
 
         var games = current._games.ToList();
         if (pathMatch.Game is null) games.Add(confirmation with { ExactPathOnly = true });

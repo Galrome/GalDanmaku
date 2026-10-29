@@ -43,6 +43,11 @@
             <ComboBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Detail}" Style="{StaticResource ConsoleCaption}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}" /></StackPanel></DataTemplate></ComboBox.ItemTemplate>
           </ComboBox>
           <TextBlock Text="VNDB ID 仅用于确认作品。当前 GamePack V1 无作品 ID 字段，首次关联需手动核对游戏版本和剧情节点兼容性；多条记录时请先选择正确记录。" Style="{StaticResource ConsoleCaption}" Margin="0,10,0,0" />
+          <WrapPanel Margin="0,10,0,0">
+            <ui:Button Content="重新关联剧情包" Command="{Binding Pack.BeginReassociationCommand}" Click="OnAssociationAction" Margin="0,0,8,8" AutomationProperties.AutomationId="BeginGameReassociationButton" />
+            <ui:Button Content="取消重新关联" Command="{Binding Pack.CancelReassociationCommand}" Click="OnAssociationAction" Margin="0,0,0,8" />
+          </WrapPanel>
+          <TextBlock Text="{Binding Pack.AssociationNotice}" TextWrapping="Wrap" Style="{StaticResource ConsoleCaption}" />
           <CheckBox x:Name="AssociationCompatibilityCheckBox" Margin="0,12,0,10" AutomationProperties.AutomationId="AssociationCompatibilityCheckBox"><TextBlock Text="已确认此剧情包适用于当前游戏版本，剧情节点兼容" TextWrapping="Wrap" /></CheckBox>
           <WrapPanel>
             <ui:Button Content="确认并保存关联" Appearance="Primary" Command="{Binding Pack.ConfirmAssociationCommand}" IsEnabled="{Binding IsChecked, ElementName=AssociationCompatibilityCheckBox}" Margin="0,0,8,8" AutomationProperties.AutomationId="ConfirmGameAssociationButton" />

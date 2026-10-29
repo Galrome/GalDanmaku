@@ -35,6 +35,8 @@ public sealed class LunaGameLibraryProvider(string path) : IGameLibraryProvider
                     HasValidSnapshot = true;
                     Status = data.SkippedRecords == 0 ? $"Luna 游戏库已读取：{_snapshot.Count} 条记录。"
                         : $"Luna 游戏库已读取：{_snapshot.Count} 条记录，跳过 {data.SkippedRecords} 条异常记录。";
+                    if (data.UnlistedRecords > 0)
+                        Status += $" 另有 {data.UnlistedRecords} 条未被当前列表或分组引用的历史配置，未导入。";
                     return _snapshot;
                 }
                 catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException

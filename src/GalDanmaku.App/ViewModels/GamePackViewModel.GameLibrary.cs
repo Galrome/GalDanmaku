@@ -18,6 +18,8 @@ public sealed partial class GamePackViewModel
     private string? _boundExecutablePath;
     private GameLibraryEntry? _selectedLibraryCandidate;
     private bool _confirmingAssociation;
+    private string? _reassociationGameId;
+    private string? _confirmedPathGameId;
     private long _libraryGeneration;
     private readonly SemaphoreSlim _libraryConfigurationGate = new(1, 1);
 
@@ -32,7 +34,7 @@ public sealed partial class GamePackViewModel
         {
             if (SetProperty(ref _selectedLibraryCandidate, value))
             {
-                if (value is not null) ShowIdentityDetails(value.VndbId, value.BangumiId, "Luna 候选 · 待用户确认", null);
+                if (value is not null) ShowIdentityDetails(value.VndbId, value.BangumiId, "Luna 所选候选 · 关联须确认", _requiredGameId);
                 ConfirmAssociationCommand.NotifyCanExecuteChanged();
             }
         }
@@ -40,6 +42,12 @@ public sealed partial class GamePackViewModel
 
     public IAsyncRelayCommand RefreshLibraryCommand { get; private set; } = null!;
     public IAsyncRelayCommand ConfirmAssociationCommand { get; private set; } = null!;
+    public IRelayCommand BeginReassociationCommand { get; private set; } = null!;
+    public IRelayCommand CancelReassociationCommand { get; private set; } = null!;
+    public bool IsReassociating => _reassociationGameId is not null;
+    public string AssociationNotice => IsReassociating
+        ? $"重新关联：{_reassociationGameId} → {SelectedPack?.Entry.GameId ?? "请选择剧情包"}。确认后更改此安装路径的关联；旧 GameId 的弹幕保留，不会自动迁移。"
+        : "已有 GameId 时，可点击“重新关联剧情包”后手动核对并确认；元数据补充不会改变 GameId。";
 
     private string LibraryLocationFile => Path.Combine(_identitySettingsDirectory, "luna-library-location.txt");
 
@@ -47,6 +55,9 @@ public sealed partial class GamePackViewModel
     {
         RefreshLibraryCommand = new AsyncRelayCommand(() => Track(RefreshLibraryAsync()), () => !_disposed);
         ConfirmAssociationCommand = new AsyncRelayCommand(() => Track(ConfirmAssociationAsync()), CanConfirmAssociation);
+        BeginReassociationCommand = new RelayCommand(BeginReassociation, () => !_disposed && !_isLoading && !_confirmingAssociation
+            && _windowBound && (_confirmedPathGameId ?? _requiredGameId) is not null && !IsReassociating);
+        CancelReassociationCommand = new RelayCommand(CancelReassociation, () => !_disposed && !_confirmingAssociation && IsReassociating);
         // Explicit local preference only: never scan the machine for other applications' libraries.
         if (_developerSession) return;
         try
@@ -133,13 +144,14 @@ public sealed partial class GamePackViewModel
     {
         _identitySummary = result.DisplayName == "未识别游戏" ? result.DisplayName : $"已识别：{result.DisplayName}";
         _requiredGameId = result.GameId;
+        _confirmedPathGameId = result.ConfirmedPathGameId;
         foreach (GameLibraryEntry entry in result.Candidates) IdentityCandidates.Add(entry);
         SelectedLibraryCandidate = result.Candidates.Count == 1 ? result.Candidates[0] : null;
         ShowIdentityDetails(result.VndbId, result.BangumiId, result.Source, result.GameId);
         OnPropertyChanged(nameof(GameIdentity));
         OnPropertyChanged(nameof(ActiveSummary));
         LoadCommand.NotifyCanExecuteChanged();
-        ConfirmAssociationCommand.NotifyCanExecuteChanged();
+        NotifyAssociationState();
     }
 
     private void ShowIdentityDetails(string? vndb, string? bangumi, string source, string? gameId) =>
@@ -148,14 +160,39 @@ public sealed partial class GamePackViewModel
 
     private void ClearIdentityCandidates()
     {
+        _reassociationGameId = null;
+        _confirmedPathGameId = null;
         IdentityCandidates.Clear();
         SelectedLibraryCandidate = null;
         IdentityDetails = "尚无游戏身份。";
+        NotifyAssociationState();
+    }
+
+    private void BeginReassociation()
+    {
+        if (!BeginReassociationCommand.CanExecute(null)) return;
+        _reassociationGameId = _confirmedPathGameId ?? _requiredGameId;
+        NotifyAssociationState();
+    }
+
+    private void CancelReassociation()
+    {
+        _reassociationGameId = null;
+        NotifyAssociationState();
+    }
+
+    private void NotifyAssociationState()
+    {
+        OnPropertyChanged(nameof(IsReassociating));
+        OnPropertyChanged(nameof(AssociationNotice));
         ConfirmAssociationCommand.NotifyCanExecuteChanged();
+        BeginReassociationCommand.NotifyCanExecuteChanged();
+        CancelReassociationCommand.NotifyCanExecuteChanged();
     }
 
     private bool CanConfirmAssociation() => !_disposed && !_confirmingAssociation && !_isLoading && _windowBound
-        && !string.IsNullOrWhiteSpace(_boundExecutablePath) && _requiredGameId is null
+        && !string.IsNullOrWhiteSpace(_boundExecutablePath)
+        && (_requiredGameId is null && _confirmedPathGameId is null || IsReassociating)
         && (IdentityCandidates.Count == 0 || SelectedLibraryCandidate is not null)
         && SelectedPack is { IsSelectable: true };
 
@@ -165,13 +202,14 @@ public sealed partial class GamePackViewModel
         long generation = _generation;
         GameLibraryEntry? entry = SelectedLibraryCandidate;
         string sourceMappingPath = _mappingPath;
+        string? expectedGameId = IsReassociating ? _confirmedPathGameId : null;
         _confirmingAssociation = true;
-        ConfirmAssociationCommand.NotifyCanExecuteChanged();
+        NotifyAssociationState();
         try
         {
             // Validate the full pack before persisting its real GameId. No index is activated here.
             LoadedGamePack loaded = await Task.Run(() => _loader(item.Directory, _lifetime.Token), _lifetime.Token);
-            if (IsStale(generation)) return;
+            if (IsStale(generation) || SelectedPack != item || SelectedLibraryCandidate != entry) return;
             if (loaded.Pack.GameId != item.Entry.GameId || loaded.Index.GameId != loaded.Pack.GameId)
                 throw new InvalidDataException("剧情包身份已变化，请刷新后重新确认。");
             ValidateRealWindowPack(loaded.Pack);
@@ -179,7 +217,7 @@ public sealed partial class GamePackViewModel
             var confirmation = new LocalGameMapping("local:" + Guid.NewGuid().ToString("N"),
                 entry?.DisplayName ?? loaded.Pack.Name, Path.GetFileName(path), path, loaded.Pack.GameId,
                 entry?.ProviderId, entry?.SourceGameId, entry?.WorkId, entry?.VndbId, entry?.BangumiId, ExactPathOnly: true);
-            await LocalGameMappings.SaveConfirmationAsync(sourceMappingPath, destination, confirmation, _lifetime.Token);
+            await LocalGameMappings.SaveConfirmationAsync(sourceMappingPath, destination, confirmation, _lifetime.Token, expectedGameId);
             if (IsStale(generation) || sourceMappingPath != _mappingPath) return;
             string pointer = Path.Combine(_identitySettingsDirectory, "game-mapping-location.txt");
             await File.WriteAllTextAsync(pointer + ".tmp", "game-mappings.local.json", _lifetime.Token);
@@ -200,7 +238,7 @@ public sealed partial class GamePackViewModel
         finally
         {
             _confirmingAssociation = false;
-            if (!_disposed) ConfirmAssociationCommand.NotifyCanExecuteChanged();
+            if (!_disposed) NotifyAssociationState();
         }
     }
 

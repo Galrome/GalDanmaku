@@ -109,6 +109,7 @@ public sealed partial class GamePackViewModel : ObservableObject, IAsyncDisposab
             {
                 LoadCommand.NotifyCanExecuteChanged();
                 ConfirmAssociationCommand.NotifyCanExecuteChanged();
+                OnPropertyChanged(nameof(AssociationNotice));
             }
         }
     }
@@ -424,7 +425,7 @@ public sealed partial class GamePackViewModel : ObservableObject, IAsyncDisposab
         if (_isLoading == value) return;
         _isLoading = value;
         OnPropertyChanged(nameof(IsLoading));
-        ConfirmAssociationCommand.NotifyCanExecuteChanged();
+        NotifyAssociationState();
     }
 
     private void OnLocationChanged(object? sender, StoryLocationChangedEventArgs args)

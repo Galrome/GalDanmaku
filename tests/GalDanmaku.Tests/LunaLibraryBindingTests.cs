@@ -38,6 +38,7 @@ public sealed class LunaLibraryBindingTests : IDisposable
         await using var restoredText = NewTextSource();
         await using var restoredStory = new StoryLocatorViewModel(restoredText, "unused.json");
         await using var restored = NewPacks(session, restoredText, restoredStory);
+        Assert.Equal(library, restored.LunaLibraryDirectory);
         await restored.RefreshAsync();
         await restored.BindWindowAsync(game);
         Assert.Equal("gd:story:one", restored.ActivePack?.GameId);
@@ -108,9 +109,90 @@ public sealed class LunaLibraryBindingTests : IDisposable
         Assert.True(text.IsAvailable);
     }
 
+    [Fact]
+    public async Task ReassociationRequiresExplicitStartAndCompareAndSwapPreservesUnrelatedMappings()
+    {
+        MakePack("gd:story:replacement");
+        string game = Path.Combine(_root, "game.exe");
+        string library = await WriteLibraryAsync(game);
+        string mapping = Path.Combine(_root, "game-mappings.local.json");
+        var legacy = new LocalGameMapping("local:legacy", "Legacy", "game.exe", game);
+        var unrelated = new LocalGameMapping("local:other", "Other", "other.exe", Path.Combine(_root, "other.exe"));
+        await File.WriteAllTextAsync(mapping, JsonSerializer.Serialize(new { version = 1, games = new[] { legacy, unrelated } },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)), TestContext.Current.CancellationToken);
+        byte[] original = await File.ReadAllBytesAsync(mapping, TestContext.Current.CancellationToken);
+        using var session = new LocalCommentSession(new EmptyRepository());
+        await using var text = NewTextSource();
+        await using var story = new StoryLocatorViewModel(text, "unused.json");
+        await using var packs = NewPacks(session, text, story);
+        await packs.ConfigureLunaLibraryAsync(library);
+        await packs.RefreshAsync();
+        await packs.BindWindowAsync(game);
+        Assert.Contains("local:legacy", packs.IdentityDetails);
+        Assert.Contains("v60663", packs.IdentityDetails);
+        Assert.Single(packs.IdentityCandidates);
+        Assert.False(packs.ConfirmAssociationCommand.CanExecute(null));
+
+        Task reception = text.StartCommand.ExecuteAsync(null);
+        packs.BeginReassociationCommand.Execute(null);
+        Assert.True(text.IsRunning);
+        Assert.True(packs.IsReassociating);
+        packs.CancelReassociationCommand.Execute(null);
+        Assert.False(packs.IsReassociating);
+        Assert.True(text.IsRunning);
+        Assert.Equal(original, await File.ReadAllBytesAsync(mapping, TestContext.Current.CancellationToken));
+
+        packs.BeginReassociationCommand.Execute(null);
+        Assert.True(packs.ConfirmAssociationCommand.CanExecute(null));
+        Assert.Contains("local:legacy → gd:story:replacement", packs.AssociationNotice);
+        await packs.ConfirmAssociationCommand.ExecuteAsync(null);
+        await reception;
+        Assert.Equal("gd:story:replacement", packs.ActivePack?.GameId);
+        LocalGameMappings saved = await LocalGameMappings.LoadAsync(mapping, TestContext.Current.CancellationToken);
+        Assert.Equal("gd:story:replacement", saved.MatchExact(game).Game?.RequiredGamePackId);
+        Assert.Equal("one", saved.MatchExact(game).Game?.SourceGameId);
+        Assert.Equal(unrelated, saved.MatchExact(unrelated.ExecutablePath).Game);
+        byte[] confirmed = await File.ReadAllBytesAsync(mapping, TestContext.Current.CancellationToken);
+        await Assert.ThrowsAsync<InvalidDataException>(() => LocalGameMappings.SaveConfirmationAsync(mapping, mapping,
+            legacy with { GamePackId = "gd:story:wrong" }, TestContext.Current.CancellationToken, expectedGameId: "local:legacy"));
+        Assert.Equal(confirmed, await File.ReadAllBytesAsync(mapping, TestContext.Current.CancellationToken));
+    }
+
     private GamePackViewModel NewPacks(LocalCommentSession session, TextSourceViewModel text, StoryLocatorViewModel story) =>
         new(session, text, story, roots: [Path.Combine(_root, "packs")],
             mappingPath: Path.Combine(_root, "game-mappings.local.json"), identitySettingsDirectory: _root);
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReassociationRepairsMetadataConflictOrAddsMovedLegacyInstallation(bool metadataConflict)
+    {
+        MakePack("gd:story:replacement");
+        string game = Path.Combine(_root, "game.exe");
+        string priorPath = metadataConflict ? game : Path.Combine(_root, "old", "game.exe");
+        var prior = new LocalGameMapping("old", "Prior game", "game.exe", priorPath, "gd:story:prior",
+            metadataConflict ? "lunatranslator" : null, metadataConflict ? "one" : null,
+            metadataConflict ? "vndb:v1" : null, metadataConflict ? "v1" : null);
+        string mapping = Path.Combine(_root, "game-mappings.local.json");
+        await File.WriteAllTextAsync(mapping, JsonSerializer.Serialize(new { version = 1, games = new[] { prior } },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)), TestContext.Current.CancellationToken);
+        using var session = new LocalCommentSession(new EmptyRepository());
+        await using var text = NewTextSource();
+        await using var story = new StoryLocatorViewModel(text, "unused.json");
+        await using var packs = NewPacks(session, text, story);
+        if (metadataConflict) await packs.ConfigureLunaLibraryAsync(await WriteLibraryAsync(game));
+        await packs.RefreshAsync();
+        await packs.BindWindowAsync(game);
+        Assert.Null(packs.ActivePack);
+        Assert.False(packs.ConfirmAssociationCommand.CanExecute(null));
+        Assert.True(packs.BeginReassociationCommand.CanExecute(null));
+        packs.BeginReassociationCommand.Execute(null);
+        await packs.ConfirmAssociationCommand.ExecuteAsync(null);
+        Assert.Equal("gd:story:replacement", packs.ActivePack?.GameId);
+        LocalGameMappings saved = await LocalGameMappings.LoadAsync(mapping, TestContext.Current.CancellationToken);
+        Assert.Equal("gd:story:replacement", saved.MatchExact(game).Game?.RequiredGamePackId);
+        if (!metadataConflict) Assert.Equal(prior, saved.MatchExact(priorPath).Game);
+    }
 
     private static TextSourceViewModel NewTextSource() => new(new TextSourceOptions(),
         (action, _) => { action(); return Task.CompletedTask; }, (_, _) => new WaitingSource());

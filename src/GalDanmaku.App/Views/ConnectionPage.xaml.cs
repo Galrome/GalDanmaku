@@ -29,6 +29,8 @@ public partial class ConnectionPage : UserControl
         if (AssociationCompatibilityCheckBox is not null) AssociationCompatibilityCheckBox.IsChecked = false;
     }
 
+    private void OnAssociationAction(object sender, RoutedEventArgs args) => AssociationCompatibilityCheckBox.IsChecked = false;
+
     private async void OnWindowSelected(object sender, SelectionChangedEventArgs args)
     {
         if (AssociationCompatibilityCheckBox is not null) AssociationCompatibilityCheckBox.IsChecked = false;

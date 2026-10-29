@@ -42,7 +42,7 @@ internal static class LunaGameDataReader
             || root[0].ValueKind != JsonValueKind.Array || root[1].ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("Luna 游戏库结构不受支持，需要 UID 列表和游戏详情表。");
 
-        // Do not assume the recent-games list contains every game, or that a path identifies one UID.
+        // Details can retain deleted/historical records. Only current list/group references form the library.
         var records = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         var duplicateUids = new HashSet<string>(StringComparer.Ordinal);
         foreach (JsonProperty property in root[1].EnumerateObject())
@@ -55,8 +55,14 @@ internal static class LunaGameDataReader
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (JsonElement uid in root[0].EnumerateArray())
             if (uid.ValueKind == JsonValueKind.String && uid.GetString() is { } key && seen.Add(key)) orderedUids.Add(key);
-        foreach (string uid in records.Keys)
-            if (seen.Add(uid)) orderedUids.Add(uid);
+        if (root.GetArrayLength() > 2 && root[2].ValueKind == JsonValueKind.Array)
+            foreach (JsonElement group in root[2].EnumerateArray())
+            {
+                if (group.ValueKind != JsonValueKind.Object || !group.TryGetProperty("games", out JsonElement groupGames)
+                    || groupGames.ValueKind != JsonValueKind.Array) continue;
+                foreach (JsonElement uid in groupGames.EnumerateArray())
+                    if (uid.ValueKind == JsonValueKind.String && uid.GetString() is { } key && seen.Add(key)) orderedUids.Add(key);
+            }
 
         string configDirectory = Path.GetDirectoryName(filePath)!;
         string gameBase = string.Equals(Path.GetFileName(configDirectory), "userconfig", StringComparison.OrdinalIgnoreCase)
@@ -84,7 +90,7 @@ internal static class LunaGameDataReader
                 ReadIdentifier(record, "vid", vndb: true), ReadIdentifier(record, "bgmsid", vndb: false),
                 NormalizePath(ReadString(record, "launchpath", 32767), gameBase), ReadScalar(record, "launch_method", 128)));
         }
-        return new LunaGameDataSnapshot(games.AsReadOnly(), skipped);
+        return new LunaGameDataSnapshot(games.AsReadOnly(), skipped, records.Keys.Count(uid => !seen.Contains(uid)));
     }
 
     private static string? ReadString(JsonElement record, string key, int maximumLength)

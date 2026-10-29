@@ -24,7 +24,7 @@ public sealed class LunaLibraryTests : IDisposable
             ["broken"] = Array.Empty<string>(),
             ["missing-path"] = new { title = "Incomplete" }
         };
-        await File.WriteAllTextAsync(file, JsonSerializer.Serialize(new object[] { new[] { "one", "two" }, records }), TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(file, JsonSerializer.Serialize(new object[] { records.Keys.ToArray(), records }), TestContext.Current.CancellationToken);
         var provider = new LunaGameLibraryProvider(_directory);
         IReadOnlyList<GameLibraryEntry> games = await provider.GetGamesAsync(TestContext.Current.CancellationToken);
         Assert.True(provider.HasValidSnapshot);
@@ -38,6 +38,55 @@ public sealed class LunaLibraryTests : IDisposable
         Assert.Equal("direct", games[0].LaunchMethod);
         Assert.Null(games[2].VndbId);
         Assert.Null(games[2].BangumiId);
+    }
+
+    [Fact]
+    public async Task Reader_UsesCurrentListAndGroupsWithoutResurrectingUnlistedDetails()
+    {
+        string file = Path.Combine(_directory, "current.json");
+        var records = new Dictionary<string, object>
+        {
+            ["listed"] = new { gamepath = Path.Combine(_directory, "not-installed.exe") },
+            ["group-only"] = new { gamepath = Path.Combine(_directory, "group.exe") },
+            ["historical"] = new { gamepath = Path.Combine(_directory, "old.exe") }
+        };
+        await File.WriteAllTextAsync(file, JsonSerializer.Serialize(new object?[]
+        {
+            new[] { "listed" }, records, new object?[] { null, 1, new { games = new[] { "listed", "group-only" } } }
+        }), TestContext.Current.CancellationToken);
+        var provider = new LunaGameLibraryProvider(file);
+        IReadOnlyList<GameLibraryEntry> games = await provider.GetGamesAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(new[] { "listed", "group-only" }, games.Select(entry => entry.SourceGameId));
+        Assert.Contains("1 条", provider.Status);
+        Assert.Contains("未导入", provider.Status);
+        // An explicitly empty library must not revive all retained details.
+        await File.WriteAllTextAsync(file, JsonSerializer.Serialize(new object[] { Array.Empty<string>(), records }),
+            TestContext.Current.CancellationToken);
+        Assert.Empty(await provider.GetGamesAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task LegacyMappingGetsUniqueMetadataWithoutChangingItsStoryIdentity()
+    {
+        string game = Path.Combine(_directory, "game.exe");
+        string file = Path.Combine(_directory, "legacy.json");
+        var legacy = new LocalGameMapping("local:legacy", "Legacy game", "game.exe", game);
+        await File.WriteAllTextAsync(file, JsonSerializer.Serialize(new { version = 1, games = new[] { legacy } },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)), TestContext.Current.CancellationToken);
+        LocalGameMappings mappings = await LocalGameMappings.LoadAsync(file, TestContext.Current.CancellationToken);
+        byte[] before = await File.ReadAllBytesAsync(file, TestContext.Current.CancellationToken);
+        var entry = new GameLibraryEntry("lunatranslator", "uid", game, "Luna name", "vndb:v60663", "v60663", "611546");
+        GameIdentityResult result = GameIdentityResolver.Resolve(game, mappings, [entry]);
+        Assert.Equal("local:legacy", result.GameId);
+        Assert.Equal("v60663", result.VndbId);
+        Assert.Equal("611546", result.BangumiId);
+        Assert.Single(result.Candidates);
+        Assert.Contains("Luna", result.Source);
+        Assert.Equal(before, await File.ReadAllBytesAsync(file, TestContext.Current.CancellationToken));
+        GameIdentityResult multiple = GameIdentityResolver.Resolve(game, mappings, [entry, entry with { SourceGameId = "other" }]);
+        Assert.Equal("local:legacy", multiple.GameId);
+        Assert.Null(multiple.VndbId);
+        Assert.Equal(2, multiple.Candidates.Count);
     }
 
     [Fact]
@@ -148,6 +197,7 @@ public sealed class LunaLibraryTests : IDisposable
         var provider = new LunaGameLibraryProvider(file);
         IReadOnlyList<GameLibraryEntry> games = await provider.GetGamesAsync(TestContext.Current.CancellationToken);
         Assert.True(provider.HasValidSnapshot, provider.Status);
+        TestContext.Current.TestOutputHelper?.WriteLine(provider.Status);
         GameLibraryEntry game = Assert.Single(games, entry => string.Equals(Path.GetFileName(entry.ExecutablePath),
             "totsulover.exe", StringComparison.OrdinalIgnoreCase));
         Assert.False(string.IsNullOrWhiteSpace(game.SourceGameId));
@@ -156,6 +206,17 @@ public sealed class LunaLibraryTests : IDisposable
         GameIdentityResult result = GameIdentityResolver.Resolve(game.ExecutablePath, LocalGameMappings.Empty, games);
         Assert.Contains(result.Candidates, candidate => candidate.SourceGameId == game.SourceGameId);
         Assert.Null(result.GameId);
+        string? mappingFile = Environment.GetEnvironmentVariable("GALDANMAKU_MAPPING_VALIDATION_FILE");
+        if (!string.IsNullOrWhiteSpace(mappingFile))
+        {
+            LocalGameMappings mappings = await LocalGameMappings.LoadAsync(mappingFile, TestContext.Current.CancellationToken);
+            LocalGameMapping saved = Assert.IsType<LocalGameMapping>(mappings.MatchExact(game.ExecutablePath).Game);
+            GameIdentityResult enriched = GameIdentityResolver.Resolve(game.ExecutablePath, mappings, games);
+            Assert.Equal(saved.RequiredGamePackId, enriched.GameId);
+            Assert.Equal("v60663", enriched.VndbId);
+            Assert.Equal("611546", enriched.BangumiId);
+            TestContext.Current.TestOutputHelper?.WriteLine($"Existing GameId retained; VNDB={enriched.VndbId}; Bangumi={enriched.BangumiId}.");
+        }
     }
 
     private async Task<string> WriteLibraryAsync()
