@@ -63,15 +63,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         { ConfigurationNotice = configNotice };
         Story = new StoryLocatorViewModel(TextSource, Path.Combine(AppContext.BaseDirectory, "developer-fixtures", "story-demo.json"));
         string databasePath = developerSession
-            ? Path.Combine(Path.GetDirectoryName(RuntimeLog.DirectoryPath) ?? SettingsDirectory, "developer", "danmaku.db")
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "danmaku.db");
+            ? ApplicationDataPaths.DeveloperDatabasePath : ApplicationDataPaths.DatabasePath;
         var repository = new SqliteCommentRepository(databasePath);
         LocalDatabasePath = databasePath;
         _session = new LocalCommentSession(repository);
         _overlay = new OverlayWindow(_session.Playback);
         InitializeLikes(repository);
         var roots = new List<string> { Path.Combine(AppContext.BaseDirectory, developerSession ? "developer-fixtures/gamepacks" : "gamepacks") };
-        string userPacks = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "gamepacks");
+        string userPacks = Path.Combine(ApplicationDataPaths.DataDirectory, "gamepacks");
         if (!developerSession) roots.Add(userPacks);
         Pack = new GamePackViewModel(_session, TextSource, Story, roots: roots, developerSession: developerSession);
         InitializeDemo();

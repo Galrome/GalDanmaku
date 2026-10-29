@@ -87,9 +87,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
 
     private static string ResolveMappingPath()
     {
-        string userDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku");
-        string settingsDirectory = Environment.GetEnvironmentVariable("GALDANMAKU_SETTINGS_DIRECTORY") ?? userDirectory;
-        return LocalGameMappings.ResolveConfigurationPath(settingsDirectory, userDirectory,
+        return LocalGameMappings.ResolveConfigurationPath(ApplicationDataPaths.SettingsDirectory, ApplicationDataPaths.DataDirectory,
             Environment.GetEnvironmentVariable("GALDANMAKU_GAME_MAPPING_FILE"));
     }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }

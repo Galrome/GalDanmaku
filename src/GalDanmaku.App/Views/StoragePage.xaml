@@ -7,7 +7,7 @@
       <TextBlock Text="弹幕和本地点赞按游戏及已确认的剧情节点保存。没有确认节点时不会把弹幕保存到候选剧情；本应用没有账号、云同步或云端弹幕服务。" TextWrapping="Wrap" />
       <TextBlock Text="当前弹幕数据库" Style="{StaticResource ConsoleCaption}" Margin="0,16,0,6" />
       <TextBox Text="{Binding LocalDatabasePath, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" />
-      <TextBlock Text="备份前先正常退出程序，再复制数据库所在的整个文件夹，包括可能存在的 SQLite 辅助文件。更新应用不会迁移或清空已有弹幕。" Style="{StaticResource ConsoleCaption}" Margin="0,12,0,16" />
+      <TextBlock Text="配置、弹幕数据库、游戏适配包和日志保存在程序目录下的 data 文件夹。备份或更换程序目录前请正常退出程序，再完整复制 data，包括可能存在的 SQLite 辅助文件；更新时保留此文件夹。" Style="{StaticResource ConsoleCaption}" Margin="0,12,0,16" />
       <TextBlock Text="日志与隐私" Style="{StaticResource ConsoleSectionTitle}" />
       <TextBlock Text="运行日志按日期追加保存，可在高级诊断查看、打开目录或导出。详细日志可能含台词与本地路径，分享前请检查内容；默认导出会移除详细字段。开发测试使用独立数据库。" TextWrapping="Wrap" />
     </StackPanel></Border>

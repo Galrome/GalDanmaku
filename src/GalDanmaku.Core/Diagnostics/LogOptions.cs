@@ -85,6 +85,6 @@ public sealed class LogOptions
     }
 
     internal string ResolveDirectory() => Path.GetFullPath(
-        Directory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "logs"),
+        Directory ?? ApplicationDataPaths.LogsDirectory,
         AppContext.BaseDirectory);
 }

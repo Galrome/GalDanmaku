@@ -8,6 +8,7 @@ using System.Windows.Data;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using GalDanmaku.Core;
 using GalDanmaku.Core.Diagnostics;
 using Microsoft.Win32;
 
@@ -42,7 +43,7 @@ public sealed class LogViewerViewModel : ObservableObject, IDisposable
     public IRelayCommand CopyCommand { get; }
     public IRelayCommand OpenDirectoryCommand { get; }
     public IAsyncRelayCommand ExportCommand { get; }
-    public string DirectoryPath => RuntimeLog.DirectoryPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "logs");
+    public string DirectoryPath => RuntimeLog.DirectoryPath ?? ApplicationDataPaths.LogsDirectory;
     public string Level { get => _level; set { if (SetProperty(ref _level, value)) Entries.Refresh(); } }
     public string Module { get => _module; set { if (SetProperty(ref _module, value)) Entries.Refresh(); } }
     public string Search { get => _search; set { if (SetProperty(ref _search, value)) Entries.Refresh(); } }

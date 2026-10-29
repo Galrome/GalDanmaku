@@ -6,7 +6,7 @@
       <WrapPanel><ui:Button Content="开始独立测试会话" AutomationProperties.AutomationId="BeginTestSessionButton" Command="{Binding BeginTestSessionCommand}" Appearance="Primary" Margin="0,0,8,0" /><ui:Button Content="停止测试会话" Command="{Binding EndTestSessionCommand}" Margin="0,0,8,0" /><ui:Button Content="关闭开发者模式" Command="{Binding DisableDeveloperModeCommand}" /></WrapPanel>
     </StackPanel>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel>
-      <Expander Header="本地游戏识别配置（开发维护）" Margin="0,0,0,12"><StackPanel Margin="0,8,0,0"><TextBlock Text="仅供维护本地识别映射。显式选择配置后，会停止正常游戏的原文接收并重新识别已绑定窗口；随后请重新开始接收。开启开发者模式本身不会执行这些操作。" Style="{StaticResource ConsoleCaption}" /><TextBlock Text="{Binding Pack.MappingPath}" Style="{StaticResource ConsoleCaption}" Margin="0,8,0,8" /><ui:Button Content="选择私有映射文件…" Click="OnBrowseMapping" HorizontalAlignment="Left" /></StackPanel></Expander>
+      <Expander Header="本地游戏识别配置（开发维护）" Margin="0,0,0,12"><StackPanel Margin="0,8,0,0"><TextBlock Text="导入的私有映射保存在程序目录的 data 中。显式导入后，会停止原文接收并重新识别已绑定窗口；随后请重新开始接收。开启开发者模式本身不会执行这些操作。" Style="{StaticResource ConsoleCaption}" /><TextBlock Text="{Binding Pack.MappingPath}" Style="{StaticResource ConsoleCaption}" Margin="0,8,0,8" /><ui:Button Content="导入私有映射文件…" Click="OnBrowseMapping" HorizontalAlignment="Left" /></StackPanel></Expander>
       <StackPanel DataContext="{Binding TestSession}" IsEnabled="{Binding DataContext.HasTestSession, RelativeSource={RelativeSource AncestorType=views:DeveloperPage}}">
       <Expander Header="模拟游戏包（合成包 A / 合成包 B）" IsExpanded="True" Margin="0,0,0,12"><StackPanel Margin="0,8,0,0">
         <views:GamePackPanel DataContext="{Binding Pack}" />
