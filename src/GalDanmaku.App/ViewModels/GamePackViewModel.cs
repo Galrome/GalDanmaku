@@ -27,7 +27,8 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     private readonly StoryLocatorViewModel _story;
     private readonly Func<string, CancellationToken, Task<LoadedGamePack>> _loader;
     private readonly IReadOnlyList<string> _roots;
-    private readonly string _mappingPath;
+    private string _mappingPath;
+    private readonly bool _developerSession;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly List<Task> _inflight = [];
     private CancellationTokenSource? _loadCancellation;
@@ -42,11 +43,11 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     private bool _windowBound;
     private string? _requiredGameId;
     private string _identitySummary = "";
-    private string _status = "尚未加载游戏包。选择一个游戏包后点击“加载”。";
+    private string _status = "选择游戏窗口后自动识别游戏并查找游戏适配包。";
 
     public GamePackViewModel(LocalCommentSession session, TextSourceViewModel textSource, StoryLocatorViewModel story,
         Func<string, CancellationToken, Task<LoadedGamePack>>? loader = null, IReadOnlyList<string>? roots = null,
-        string? mappingPath = null)
+        string? mappingPath = null, bool developerSession = false)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(textSource);
@@ -56,13 +57,16 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         _story = story;
         _loader = loader ?? GamePackLoader.LoadAsync;
         _roots = roots ?? [];
-        _mappingPath = mappingPath ?? Path.Combine(AppContext.BaseDirectory, "game-mappings", "local-debug.json");
+        _developerSession = developerSession;
+        _mappingPath = mappingPath ?? Environment.GetEnvironmentVariable("GALDANMAKU_GAME_MAPPING_FILE")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "game-mappings.local.json");
         _story.LocationChanged += OnLocationChanged;
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !_disposed && !_isRefreshing);
         LoadCommand = new AsyncRelayCommand(LoadSelectedAsync, () => !_disposed && SelectedPack is { IsSelectable: true } item && CanLoadItem(item),
             AsyncRelayCommandOptions.AllowConcurrentExecutions);
-        // Nothing is active yet: locating, text and comments stay unavailable until a pack loads.
-        _textSource.SetUnavailable("尚未加载游戏包，文本源不可用。");
+        // Unindexed reception is available immediately; comments still require an indexed, confirmed node.
+        if (developerSession) _textSource.UseTestDefaults();
+        else _textSource.UseUnindexedLuna("选择游戏窗口后自动识别游戏适配包。");
         _story.ClearIndex("尚未加载游戏包。");
     }
 
@@ -73,7 +77,8 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     public GamePack? ActivePack => _activePack;
     public bool HasActivePack => _activePack is not null;
     public bool IsLoading => _isLoading;
-    public string GameIdentity => _identitySummary;
+    public string GameIdentity => string.IsNullOrEmpty(_identitySummary) ? "尚未识别游戏" : _identitySummary;
+    public string MappingPath { get => _mappingPath; set => SetProperty(ref _mappingPath, value); }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public string ActiveSummary => _activePack is { } pack ? $"{pack.Name} · v{pack.Version} · {pack.GameId}"
         : string.IsNullOrEmpty(_identitySummary) ? "未加载游戏包" : $"{_identitySummary} · 未加载剧情包";
@@ -116,7 +121,8 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
             SelectedPack = Packs.FirstOrDefault(item => item.IsSelectable && string.Equals(item.Directory, selected, StringComparison.OrdinalIgnoreCase))
                 ?? Packs.FirstOrDefault(item => item.IsSelectable);
             if (!_isLoading && _activePack is null && !_windowBound)
-                Status = Packs.Count == 0 ? "没有找到游戏包。可将游戏包文件夹放入程序目录的 gamepacks 后刷新。" : $"找到 {Packs.Count} 个游戏包。选择后点击“加载”。";
+                Status = !_developerSession ? "选择游戏窗口后自动识别游戏适配包；缺少适配包时仍可接收 Luna 原文。"
+                    : Packs.Count == 0 ? "未找到合成包，可指定本地测试包，或使用携带测试资源的开发构建。" : $"找到 {Packs.Count} 个测试游戏包。选择后点击“加载”。";
         }
         catch (OperationCanceledException) when (_disposed)
         {
@@ -145,7 +151,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _windowBound = true;
-        RuntimeLog.SetGameId(null);
+        if (!_developerSession) RuntimeLog.SetGameId(null);
         RuntimeLog.Write(LogLevel.Information, "GamePack", "GameRecognitionStarted", new { executablePath, identityError });
         _requiredGameId = null;
         _identitySummary = "正在识别游戏";
@@ -158,7 +164,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         if (_disposed) return Task.CompletedTask;
         _windowBound = false;
         RuntimeLog.Write(LogLevel.Information, "GamePack", "GameContextCleared", new { reason = "WindowUnboundOrClosed" });
-        RuntimeLog.SetGameId(null);
+        if (!_developerSession) RuntimeLog.SetGameId(null);
         _requiredGameId = null;
         _identitySummary = "";
         (long generation, CancellationTokenSource cancellation) = BeginChange("已解除窗口绑定，未加载剧情包。");
@@ -187,7 +193,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
 
     private async Task BindWindowCoreAsync(string? executablePath, string? identityError, long generation, CancellationTokenSource cancellation)
     {
-        using var operation = RuntimeLog.BeginScope(new LogContext(OperationId: Guid.NewGuid().ToString("N")));
+        using var operation = RuntimeLog.BeginScope(new LogContext(GameId: _developerSession ? "developer-test" : null, OperationId: Guid.NewGuid().ToString("N")));
         try
         {
             await _textSource.StopAsync();
@@ -210,7 +216,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
                 return;
             }
 
-            _identitySummary = $"已识别：{game.DisplayName} · {game.Id}";
+            _identitySummary = $"已识别：{game.DisplayName}";
             _requiredGameId = game.RequiredGamePackId;
             RuntimeLog.SetGameId(game.Id);
             using var recognizedGame = RuntimeLog.BeginScope(new LogContext(GameId: game.Id));
@@ -299,7 +305,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     private async Task LoadCoreAsync(string directory, long generation, CancellationTokenSource cancellation,
         string? requiredGameId = null, bool ownsCancellation = true)
     {
-        using var operation = RuntimeLog.BeginScope(new LogContext(OperationId: Guid.NewGuid().ToString("N")));
+        using var operation = RuntimeLog.BeginScope(new LogContext(GameId: _developerSession ? "developer-test" : null, OperationId: Guid.NewGuid().ToString("N")));
         RuntimeLog.Write(LogLevel.Information, "GamePack", "GamePackLoadStarted", new { directory, requiredGameId, generation });
         try
         {
@@ -353,14 +359,16 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     private void Activate(LoadedGamePack loaded)
     {
         GamePack pack = loaded.Pack;
-        if (!_windowBound) RuntimeLog.SetGameId(pack.GameId);
+        using var context = RuntimeLog.BeginScope(new LogContext(GameId: pack.GameId));
+        if (!_windowBound && !_developerSession) RuntimeLog.SetGameId(pack.GameId);
         RuntimeLog.Write(LogLevel.Information, "GamePack", "GamePackLoaded", new { pack.GameId, pack.Name, pack.Version, pack.Directory, nodeCount = loaded.Index.Nodes.Count });
         _activePack = pack;
         _coordinator = new NodeBindingCoordinator(_session, pack.GameId);
         _coordinator.StateChanged += OnCoordinatorStateChanged;
         _story.UseIndex(loaded.Index);
-        _textSource.ApplyPack(pack.TextSource, pack.CleanText, pack.Name, lunaOnly: _windowBound);
-        Status = $"已加载：{pack.Name} · v{pack.Version} · {loaded.Index.Nodes.Count} 个节点";
+        _textSource.ApplyPack(pack.TextSource, pack.CleanText, pack.Name, lunaOnly: !_developerSession);
+        Status = _developerSession ? $"已加载：{pack.Name} · v{pack.Version} · {loaded.Index.Nodes.Count} 个节点"
+            : $"游戏适配包已就绪：{pack.Name}。等待 Luna 原文确认剧情节点。";
         OnPropertyChanged(nameof(ActivePack));
         OnPropertyChanged(nameof(HasActivePack));
         OnPropertyChanged(nameof(ActiveSummary));

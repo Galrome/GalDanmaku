@@ -43,7 +43,7 @@ public sealed class DanmakuEngine
     public bool CanFit(StoredDanmaku comment)
     {
         ArgumentNullException.ThrowIfNull(comment);
-        return HasUsableViewport && DanmakuSettings.DefaultFontSize * 1.6 + 2 * EdgePadding <= _height * _settings.AreaFraction;
+        return HasUsableViewport && comment.FontSize * 1.6 + 2 * EdgePadding <= _height * _settings.AreaFraction;
     }
 
     public bool CanFit(DanmakuDisplay display)

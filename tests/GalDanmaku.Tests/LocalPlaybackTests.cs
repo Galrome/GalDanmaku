@@ -87,4 +87,26 @@ public sealed class LocalPlaybackTests
         Assert.Throws<ArgumentException>(() => playback.AddSaved(a));
     }
 
+    [Fact]
+    public void SavedFontsPreserveColorsAndRecordsThroughMotion()
+    {
+        var engine = new DanmakuEngine();
+        engine.Configure(new DanmakuSettings(areaFraction: 1), 800, 200);
+        StoredDanmaku large = Comment(fontSize: 64, color: "#FFD166");
+        StoredDanmaku small = Comment(fontSize: 12, color: "#80D8FF");
+        Assert.True(engine.TryAdd(large, 160));
+        Assert.True(engine.TryAdd(small, 60));
+        DanmakuItem first = engine.Items[0];
+        DanmakuItem second = engine.Items[1];
+        Assert.True(second.Y >= first.Y + first.FontSize * 1.6);
+        engine.Advance(0.5);
+        Assert.Equal(64, first.FontSize);
+        Assert.Equal("#FFD166", first.Color);
+        Assert.Equal(12, second.FontSize);
+        Assert.Equal("#80D8FF", second.Color);
+        Assert.Same(large, first.Display!.Source);
+        Assert.Same(small, second.Display!.Source);
+        Assert.Equal(64, large.FontSize);
+        Assert.Equal(12, small.FontSize);
+    }
 }

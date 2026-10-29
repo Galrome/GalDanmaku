@@ -18,5 +18,6 @@
     <ProjectReference Include="../../src/GalDanmaku.Storage/GalDanmaku.Storage.csproj" />
     <Using Include="Xunit" />
     <None Include="Fixtures/story-demo.json" Link="Fixtures/phase4-story.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures/gamepacks/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

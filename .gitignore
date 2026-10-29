@@ -11,6 +11,12 @@ logs/
 *.db-shm
 *.db-wal
 *.db-journal
+
+assets/game-mappings/local-debug.json
+game-mappings.local.json
+*.jsonl
+luna-settings.json
+game-mapping-location.txt
 /README.md
 /docs/
 /assets/

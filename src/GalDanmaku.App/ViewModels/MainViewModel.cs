@@ -29,40 +29,52 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private WindowTarget? _selectedWindow;
     private bool _isBound;
     private bool _disposed;
-    private string _status = "选择一个窗口，然后绑定。";
+    private string _status = "选择游戏窗口后自动识别并绑定。";
     private string _boundTarget = "未绑定窗口";
     private double _opacityPercent = 90;
     private double _speed = 140;
     private DisplayArea _selectedArea;
     private WindowSnapshot? _lastSnapshot;
+    private readonly bool _developerSession;
+    private bool _isDeveloperMode;
+    private MainViewModel? _testSession;
+    private bool _testSessionBusy;
+    private double _newFontSize = DanmakuSettings.DefaultFontSize;
 
-    public MainViewModel()
+    public MainViewModel(bool developerSession = false)
     {
+        _developerSession = developerSession;
+        string settingsPath = Path.Combine(SettingsDirectory, "luna-settings.json");
         TextSourceOptions textOptions = new();
-        string configNotice = "界面修改仅本次运行有效；启动默认值读取程序目录的 text-source.json。";
+        string configNotice = "开始接收时保存有效的 Luna 连接设置，下次启动自动恢复。";
         try
         {
-            textOptions = TextSourceOptions.Load(Path.Combine(AppContext.BaseDirectory, "text-source.json"));
+            textOptions = TextSourceOptions.Load(File.Exists(settingsPath) ? settingsPath : Path.Combine(AppContext.BaseDirectory, "text-source.json"));
             RuntimeLog.Write(LogLevel.Information, "Main", "TextConfigurationLoaded", new { endpoint = RuntimeLog.SafeEndpoint(textOptions.Endpoint) });
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
         {
             RuntimeLog.Write(LogLevel.Warning, "Main", "TextConfigurationFailed", new { fallbackToDefaults = true }, exception);
-            configNotice = "text-source.json 读取或校验失败，已使用内置默认值；原文件未改动。可在此调整设置后开始。";
+            configNotice = "Luna 连接设置读取或校验失败，已使用内置默认值；原文件未改动。可调整设置后开始。";
         }
         Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
-        TextSource = new TextSourceViewModel(textOptions, (action, token) => dispatcher.InvokeAsync(action, DispatcherPriority.Background, token).Task)
+        TextSource = new TextSourceViewModel(textOptions, (action, token) => dispatcher.InvokeAsync(action, DispatcherPriority.Background, token).Task,
+            settingsPath: developerSession ? null : settingsPath)
         { ConfigurationNotice = configNotice };
-        Story = new StoryLocatorViewModel(TextSource, Path.Combine(AppContext.BaseDirectory, "story-demo.json"));
-        string databasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "danmaku.db");
+        Story = new StoryLocatorViewModel(TextSource, Path.Combine(AppContext.BaseDirectory, "developer-fixtures", "story-demo.json"));
+        string databasePath = developerSession
+            ? Path.Combine(Path.GetDirectoryName(RuntimeLog.DirectoryPath) ?? SettingsDirectory, "developer", "danmaku.db")
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "danmaku.db");
         var repository = new SqliteCommentRepository(databasePath);
+        LocalDatabasePath = databasePath;
         _session = new LocalCommentSession(repository);
         _overlay = new OverlayWindow(_session.Playback);
         InitializeLikes(repository);
-        var roots = new List<string> { Path.Combine(AppContext.BaseDirectory, "gamepacks") };
+        var roots = new List<string> { Path.Combine(AppContext.BaseDirectory, developerSession ? "developer-fixtures/gamepacks" : "gamepacks") };
         string userPacks = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "gamepacks");
-        if (Directory.Exists(userPacks)) roots.Add(userPacks);
-        Pack = new GamePackViewModel(_session, TextSource, Story, roots: roots);
+        if (!developerSession) roots.Add(userPacks);
+        Pack = new GamePackViewModel(_session, TextSource, Story, roots: roots, developerSession: developerSession,
+            mappingPath: developerSession ? null : LoadMappingPath());
         InitializeDemo();
         Pack.ActiveChanged += OnPackActiveChanged;
         TextSource.PropertyChanged += OnTextSourceChanged;
@@ -81,6 +93,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         BindCommand = new AsyncRelayCommand(BindAsync, () => SelectedWindow is not null && !IsBound && !_disposed);
         UnbindCommand = new RelayCommand(Unbind, () => IsBound);
         ShowFloatingComposerCommand = new RelayCommand(RequestFloatingComposer);
+        BeginTestSessionCommand = new AsyncRelayCommand(BeginTestSessionAsync, () => IsDeveloperMode && TestSession is null && !_testSessionBusy);
+        EndTestSessionCommand = new AsyncRelayCommand(EndTestSessionAsync, () => TestSession is not null && !_testSessionBusy);
+        DisableDeveloperModeCommand = new AsyncRelayCommand(() => SetDeveloperModeAsync(false));
+        if (!developerSession) Logs = new LogViewerViewModel();
         _tracker.Changed += OnWindowChanged;
         _tracker.LayerUpdated += OnWindowLayerUpdated;
         Refresh();
@@ -90,9 +106,18 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public GamePackViewModel Pack { get; }
     public TextSourceViewModel TextSource { get; }
     public StoryLocatorViewModel Story { get; }
+    public LogViewerViewModel? Logs { get; }
+    public string LocalDatabasePath { get; }
+    public bool IsDeveloperMode { get => _isDeveloperMode; private set => SetProperty(ref _isDeveloperMode, value); }
+    public MainViewModel? TestSession { get => _testSession; private set { SetProperty(ref _testSession, value); OnPropertyChanged(nameof(HasTestSession)); } }
+    public bool HasTestSession => TestSession is not null;
+    public IAsyncRelayCommand BeginTestSessionCommand { get; }
+    public IAsyncRelayCommand EndTestSessionCommand { get; }
+    public IAsyncRelayCommand DisableDeveloperModeCommand { get; }
+    public double NewFontSize { get => _newFontSize; set => SetProperty(ref _newFontSize, Math.Clamp(value, 16, 48)); }
     public IReadOnlyList<DisplayArea> Areas { get; }
     public IRelayCommand RefreshCommand { get; }
-    public IRelayCommand BindCommand { get; }
+    public IAsyncRelayCommand BindCommand { get; }
     public IRelayCommand UnbindCommand { get; }
     public IAsyncRelayCommand InitializeCommand { get; }
     public IRelayCommand ReplayCommand { get; }
@@ -111,7 +136,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         NodeBindingState.Active when _lastSnapshot?.State == TargetState.NotForeground => "已确认当前节点。弹幕已暂停并保留当前画面，切回目标窗口继续播放。",
         NodeBindingState.Active => "已确认当前节点。目标窗口回到前台后播放弹幕。",
         NodeBindingState.Failed => $"节点弹幕加载失败：{coordinator.LastError} 通常是本地数据库被占用或不可写；处理后点击“重播 / 重试当前节点”。",
-        _ when !TextSource.IsRunning => "等待剧情定位确认节点。文本源未运行，请在“实时文本接收”中点击“开始接收”。",
+        _ when !TextSource.IsRunning => "等待剧情定位确认节点。请在“游戏与连接”中开始接收 Luna 原文。",
         _ => "等待剧情定位确认节点。",
     };
     public int SavedCount => _session.Playback.SavedCount;
@@ -157,11 +182,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             if (SetProperty(ref _isBound, value))
             {
+                OnPropertyChanged(nameof(WindowBindingText));
                 BindCommand.NotifyCanExecuteChanged();
                 UnbindCommand.NotifyCanExecuteChanged();
             }
         }
     }
+
+    public string WindowBindingText => IsBound ? "已绑定游戏窗口" : "未绑定游戏窗口";
 
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public string BoundTarget { get => _boundTarget; private set => SetProperty(ref _boundTarget, value); }
@@ -211,6 +239,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         _disposed = true;
         RuntimeLog.Write(LogLevel.Information, "Main", "MainDisposing");
+        if (TestSession is { } test) { TestSession = null; await test.DisposeAsync(); }
+        Logs?.Dispose();
         _nodeClock.Stop();
         _nodeClock.Tick -= OnNodeClockTick;
         // Stop polling the target first so nothing repositions or unbinds while the rest is torn down.
@@ -313,7 +343,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         LocalStatus = "正在保存弹幕…";
         try
         {
-            StoredDanmaku saved = await coordinator.SendAsync(draft, SelectedColor.Value, DanmakuSettings.DefaultFontSize);
+            StoredDanmaku saved = await coordinator.SendAsync(draft, SelectedColor.Value, NewFontSize);
             if (_disposed) return;
             if (DraftText == draft) DraftText = "";
             LocalStatus = $"已保存到节点 {saved.NodeId} · {saved.OffsetMilliseconds / 1000.0:0.0} 秒。切回目标窗口播放。";
@@ -381,7 +411,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 && window.ProcessId == selected.ProcessId && window.ThreadId == selected.ThreadId);
             if (!IsBound)
             {
-                Status = Windows.Count == 0 ? "没有可选窗口。打开目标应用后刷新列表。" : "选择一个窗口，然后绑定。";
+                Status = Windows.Count == 0 ? "没有可选窗口。打开目标应用后刷新列表。" : "选择游戏窗口后自动识别并绑定。";
             }
         }
         catch (Win32Exception exception)
@@ -402,7 +432,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             RuntimeLog.Write(LogLevel.Information, "Window", "WindowSelected", new { hwnd = $"0x{target.Handle:X}", pid = target.ProcessId, threadId = target.ThreadId, target.ProcessName });
             target = WindowCatalog.ReadProcessIdentity(target);
-            Task matching = Pack.BindWindowAsync(target.ExecutablePath, target.ProcessIdentityError);
+            // A developer target only positions the independent test overlay; it never changes game identity.
+            Task matching = _developerSession ? Task.CompletedTask : Pack.BindWindowAsync(target.ExecutablePath, target.ProcessIdentityError);
             _tracker.Bind(target);
             await matching;
         }
@@ -418,7 +449,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private void Unbind()
     {
         RuntimeLog.Write(LogLevel.Information, "Window", "WindowUnbindRequested", new { reason = "UserOrBindingFailure" });
-        _ = Pack.ClearWindowBindingAsync();
+        if (!_developerSession) _ = Pack.ClearWindowBindingAsync();
         _tracker.Unbind();
     }
 
@@ -446,7 +477,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(NodeTime));
 
         // A closed target revokes the entire game context, including pending pack loads.
-        if (snapshot.State == TargetState.Closed) _ = Pack.ClearWindowBindingAsync();
+        if (snapshot.State == TargetState.Closed && !_developerSession) _ = Pack.ClearWindowBindingAsync();
 
         if (snapshot.State is not (TargetState.Visible or TargetState.NotForeground))
         {

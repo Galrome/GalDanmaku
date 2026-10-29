@@ -6,11 +6,12 @@
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,0"><StackPanel>
       <Border Style="{StaticResource ConsoleCard}" Margin="0,0,0,16"><StackPanel>
         <TextBlock Text="新发送弹幕" Style="{StaticResource ConsoleSectionTitle}" />
-        <TextBlock Text="颜色应用于新发送的弹幕；字号由系统统一分配，聚合弹幕随数量增大。" Style="{StaticResource ConsoleCaption}" Margin="0,0,0,16" />
+        <TextBlock Text="字号与颜色只应用于新发送的弹幕；已保存弹幕保留原始样式，聚合弹幕随数量适当放大。" Style="{StaticResource ConsoleCaption}" Margin="0,0,0,16" />
         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="88" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="48" /></Grid.RowDefinitions>
           <TextBlock Text="颜色" VerticalAlignment="Center" />
           <ComboBox Grid.Column="1" AutomationProperties.AutomationId="CommentColorComboBox" AutomationProperties.Name="弹幕颜色" ItemsSource="{Binding Colors}" SelectedItem="{Binding SelectedColor}" DisplayMemberPath="Label" IsEnabled="{Binding IsLocalIdle}" Width="160" HorizontalAlignment="Left" VerticalAlignment="Center" />
         </Grid>
+        <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="88" /><ColumnDefinition Width="*" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions><TextBlock Text="新弹幕字号" VerticalAlignment="Center" /><Slider Grid.Column="1" AutomationProperties.AutomationId="NewFontSizeSlider" Minimum="16" Maximum="48" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding NewFontSize}" VerticalAlignment="Center" /><TextBlock Grid.Column="2" Text="{Binding NewFontSize, StringFormat={}{0:0}}" HorizontalAlignment="Right" VerticalAlignment="Center" /></Grid>
       </StackPanel></Border>
       <Border Style="{StaticResource ConsoleCard}"><StackPanel>
         <TextBlock Text="播放显示" Style="{StaticResource ConsoleSectionTitle}" />
@@ -27,6 +28,7 @@
           <ComboBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" AutomationProperties.AutomationId="DisplayAreaComboBox" AutomationProperties.Name="显示区域" ItemsSource="{Binding Areas}" SelectedItem="{Binding SelectedArea}" DisplayMemberPath="Label" Width="160" HorizontalAlignment="Left" VerticalAlignment="Center" />
         </Grid>
         <TextBlock Text="区域太小时会跳过无法容纳的弹幕；扩大区域后可在概览重播。" Style="{StaticResource ConsoleCaption}" Margin="0,12,0,0" />
+
       </StackPanel></Border>
     </StackPanel></ScrollViewer>
   </Grid>

@@ -1,4 +1,4 @@
-<UserControl x:Class="GalDanmaku.App.Views.DiagnosticsPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:views="clr-namespace:GalDanmaku.App.Views">
+<UserControl x:Class="GalDanmaku.App.Views.DiagnosticsPage" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:views="clr-namespace:GalDanmaku.App.Views" xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml" Loaded="OnLoaded" Unloaded="OnUnloaded">
   <UserControl.Resources><ResourceDictionary Source="../Styles/ConsoleStyles.xaml" /></UserControl.Resources>
   <Grid>
     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
@@ -6,6 +6,8 @@
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,0"><StackPanel>
       <Border Style="{StaticResource ConsoleCard}" DataContext="{Binding TextSource}" Margin="0,0,0,16"><StackPanel>
         <TextBlock Text="文本源事件" Style="{StaticResource ConsoleSectionTitle}" />
+        <TextBlock Text="{Binding ConnectionText, StringFormat=Luna 连接：{0}}" Margin="0,0,0,6" />
+        <TextBlock Text="{Binding Status}" Style="{StaticResource ConsoleCaption}" Margin="0,0,0,12" />
         <UniformGrid Columns="4" Margin="0,0,0,12">
           <StackPanel><TextBlock Text="原始文本" Style="{StaticResource ConsoleCaption}" /><TextBlock AutomationProperties.AutomationId="RawTextCount" Text="{Binding RawCount}" FontSize="22" Margin="0,4,0,0" /></StackPanel>
           <StackPanel><TextBlock Text="新对话" Style="{StaticResource ConsoleCaption}" /><TextBlock AutomationProperties.AutomationId="NewDialogueCount" Text="{Binding NewCount}" FontSize="22" Margin="0,4,0,0" /></StackPanel>
@@ -17,7 +19,21 @@
         <TextBox AutomationProperties.AutomationId="LatestReceivedText" AutomationProperties.Name="最新归一化原文" Text="{Binding LatestText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" MinHeight="80" MaxHeight="160" VerticalScrollBarVisibility="Auto" />
         <TextBlock Text="按相邻文本与时间间隔启发式识别：重复台词可能被过滤，前缀相似的独立台词可能合并。会话内编号不是剧情节点。" Style="{StaticResource ConsoleCaption}" Margin="0,10,0,0" />
       </StackPanel></Border>
-      <views:StoryLocatorPanel DataContext="{Binding Story}" />
+      <views:StoryLocatorPanel DataContext="{Binding Story}" Margin="0,0,0,16" />
+      <Border Style="{StaticResource ConsoleCard}" DataContext="{Binding Logs}" Margin="0,0,0,16"><StackPanel>
+        <TextBlock Text="运行日志" Style="{StaticResource ConsoleSectionTitle}" />
+        <WrapPanel Margin="0,0,0,8"><ComboBox AutomationProperties.AutomationId="LogLevelFilter" ItemsSource="{Binding Levels}" SelectedItem="{Binding Level}" Width="140" Margin="0,0,8,8" /><ComboBox AutomationProperties.AutomationId="LogModuleFilter" ItemsSource="{Binding Modules}" SelectedItem="{Binding Module}" Width="160" Margin="0,0,8,8" /><ui:Button Content="刷新日志" Command="{Binding RefreshCommand}" Margin="0,0,0,8" /></WrapPanel>
+        <TextBox AutomationProperties.AutomationId="LogSearch" AutomationProperties.Name="搜索日志" Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" ToolTip="搜索事件、失败原因或详细字段" Margin="0,0,0,8" />
+        <ui:ListView Background="#171D25" Foreground="#E5EDF5" BorderBrush="#303A46" AutomationProperties.AutomationId="RuntimeLogList" ItemsSource="{Binding Entries}" SelectedItem="{Binding Selected}" Height="260" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+          <ui:ListView.View><ui:GridView ColumnHeaderContainerStyle="{StaticResource ConsoleLogHeader}"><GridViewColumn Header="时间" DisplayMemberBinding="{Binding LocalTime}" Width="135" /><GridViewColumn Header="级别" DisplayMemberBinding="{Binding Level}" Width="90" /><GridViewColumn Header="模块" DisplayMemberBinding="{Binding Module}" Width="125" /><GridViewColumn Header="事件" DisplayMemberBinding="{Binding Event}" Width="190" /><GridViewColumn Header="信息 / 失败原因" DisplayMemberBinding="{Binding Summary}" Width="280" /></ui:GridView></ui:ListView.View>
+        </ui:ListView>
+        <TextBox AutomationProperties.AutomationId="LogDetail" Text="{Binding Detail, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Height="120" VerticalScrollBarVisibility="Auto" Margin="0,8,0,8" />
+        <TextBlock Text="日志详情可能包含台词、路径与个人信息。默认复制和导出仅保留时间、级别、模块与事件，移除全部详细字段。导出范围为当前筛选的近期记录，不是全部历史。" Style="{StaticResource ConsoleCaption}" />
+        <CheckBox Content="复制 / 导出时脱敏" IsChecked="{Binding Redact}" Margin="0,8,0,8" />
+        <WrapPanel><ui:Button Content="复制选中日志" Command="{Binding CopyCommand}" Margin="0,0,8,8" /><ui:Button Content="打开日志目录" Command="{Binding OpenDirectoryCommand}" Margin="0,0,8,8" /><ui:Button Content="导出诊断日志…" Command="{Binding ExportCommand}" Margin="0,0,0,8" /></WrapPanel>
+        <TextBlock AutomationProperties.AutomationId="LogViewerStatus" Text="{Binding Status}" Style="{StaticResource ConsoleCaption}" />
+      </StackPanel></Border>
+      <Border Style="{StaticResource ConsoleCard}"><StackPanel><TextBlock Text="开发者模式" Style="{StaticResource ConsoleSectionTitle}" /><CheckBox AutomationProperties.AutomationId="DeveloperModeToggle" Content="启用开发者模式" IsEnabled="{Binding CanChangeDeveloperMode}" IsChecked="{Binding IsDeveloperMode, Mode=OneWay}" Click="OnDeveloperModeClick" /><TextBlock Text="只控制开发测试入口可见性。关闭时会停止独立测试会话并关闭测试覆盖层，正常游戏会话继续保留。" Style="{StaticResource ConsoleCaption}" Margin="0,8,0,0" /></StackPanel></Border>
     </StackPanel></ScrollViewer>
   </Grid>
 </UserControl>

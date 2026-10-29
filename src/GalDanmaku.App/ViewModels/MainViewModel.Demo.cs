@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using GalDanmaku.Core.Diagnostics;
 
 namespace GalDanmaku.App.ViewModels;
 
@@ -7,7 +8,6 @@ public sealed partial class MainViewModel
 {
     public IAsyncRelayCommand StartDemoCommand { get; private set; } = null!;
     public IAsyncRelayCommand StartTextReceptionCommand { get; private set; } = null!;
-    public event EventHandler? DemoStarted;
 
     private bool CanStartDemo => !_disposed && Pack.HasActivePack
         && TextSource.SelectedSource.IsMock && Story.CanLoad && Story.HasDemoFrames;
@@ -17,6 +17,7 @@ public sealed partial class MainViewModel
         StartDemoCommand = new AsyncRelayCommand(StartDemoAsync, () => CanStartDemo);
         StartTextReceptionCommand = new AsyncRelayCommand(async () =>
         {
+            using var context = RuntimeLog.BeginScope(new LogContext(GameId: _developerSession ? "developer-test" : null));
             Story.IsLiveMode = true;
             await TextSource.StartCommand.ExecuteAsync(null);
         }, () => !_disposed && TextSource.CanEdit);
@@ -31,6 +32,7 @@ public sealed partial class MainViewModel
 
     private async Task StartDemoAsync()
     {
+        using var context = RuntimeLog.BeginScope(new LogContext(GameId: _developerSession ? "developer-test" : null));
         if (!CanStartDemo) return;
         var pack = Pack.ActivePack;
         await TextSource.StopAsync();
@@ -39,6 +41,5 @@ public sealed partial class MainViewModel
         Story.IsLiveMode = false;
         Story.Reset();
         Story.NextDemoCommand.Execute(null);
-        DemoStarted?.Invoke(this, EventArgs.Empty);
     }
 }

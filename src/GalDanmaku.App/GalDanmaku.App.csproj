@@ -4,6 +4,7 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <IncludeDeveloperFixtures Condition="'$(IncludeDeveloperFixtures)' == ''">false</IncludeDeveloperFixtures>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="WPF-UI" Version="4.3.0" />
@@ -11,10 +12,10 @@
     <ProjectReference Include="../GalDanmaku.Core/GalDanmaku.Core.csproj" />
     <ProjectReference Include="../GalDanmaku.Storage/GalDanmaku.Storage.csproj" />
     <Content Include="../../licenses/**/*.txt" Link="licenses/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="../../tests/GalDanmaku.Tests/Fixtures/gamepacks/**" Link="gamepacks/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="../../assets/game-mappings/*.json" Link="game-mappings/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../../tests/GalDanmaku.Tests/Fixtures/**" Condition="'$(IncludeDeveloperFixtures)' == 'true'" Link="developer-fixtures/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+
     <None Update="text-source.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="logging.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <None Include="../../tests/GalDanmaku.Tests/Fixtures/story-demo.json" Link="story-demo.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+
   </ItemGroup>
 </Project>

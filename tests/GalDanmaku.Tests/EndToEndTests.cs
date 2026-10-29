@@ -101,10 +101,7 @@ public sealed class EndToEndTests : IDisposable
 
     private static async Task<LoadedGamePack> LoadPackAsync(string name)
     {
-        string? directory = AppContext.BaseDirectory;
-        while (directory is not null && !File.Exists(Path.Combine(directory, "GalDanmaku.slnx"))) directory = Path.GetDirectoryName(directory);
-        Assert.NotNull(directory);
-        return await GamePackLoader.LoadAsync(Path.Combine(directory, "assets", "gamepacks", name), TestContext.Current.CancellationToken);
+        return await GamePackLoader.LoadAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "gamepacks", name), TestContext.Current.CancellationToken);
     }
 
     private async Task<string[]> TextsAsync(string gameId, string nodeId) =>

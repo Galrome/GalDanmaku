@@ -5,10 +5,10 @@
     <StackPanel Margin="0,0,0,20"><TextBlock Text="游戏与连接" Style="{StaticResource ConsoleTitle}" /><TextBlock Text="绑定游戏窗口后自动识别游戏并查找适配包，再开始接收原文。" Style="{StaticResource ConsoleCaption}" Margin="0,6,0,0" /></StackPanel>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,0">
       <StackPanel>
-        <views:GamePackPanel DataContext="{Binding Pack}" Margin="0,0,0,16" />
+
         <Border Style="{StaticResource ConsoleCard}" Margin="0,0,0,16"><StackPanel>
           <DockPanel Margin="0,0,0,12"><ui:Button DockPanel.Dock="Right" AutomationProperties.AutomationId="RefreshWindowsButton" Content="刷新列表" Command="{Binding RefreshCommand}" /><TextBlock Text="目标窗口" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" /></DockPanel>
-          <ComboBox AutomationProperties.AutomationId="TargetWindowComboBox" AutomationProperties.Name="目标窗口" ItemsSource="{Binding Windows}" SelectedItem="{Binding SelectedWindow}" HorizontalContentAlignment="Stretch" MaxDropDownHeight="320">
+          <ComboBox AutomationProperties.AutomationId="TargetWindowComboBox" AutomationProperties.Name="目标窗口" ItemsSource="{Binding Windows}" SelectedItem="{Binding SelectedWindow}" SelectionChanged="OnWindowSelected" HorizontalContentAlignment="Stretch" MaxDropDownHeight="320">
             <ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Details}" /></DataTemplate></ComboBox.ItemTemplate>
           </ComboBox>
           <Grid Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
@@ -18,10 +18,8 @@
           </Grid>
           <TextBlock Text="支持窗口化与无边框模式；游戏失焦时弹幕暂停并保留当前画面，最小化时隐藏。" Style="{StaticResource ConsoleCaption}" Margin="0,10,0,0" />
         </StackPanel></Border>
-        <views:TextSourcePanel DataContext="{Binding TextSource}"
-                               DemoCommand="{Binding DataContext.StartDemoCommand, RelativeSource={RelativeSource AncestorType=views:ConnectionPage}}"
-                               StartReceptionCommand="{Binding DataContext.StartTextReceptionCommand, RelativeSource={RelativeSource AncestorType=views:ConnectionPage}}"
-                               HasDemoFrames="{Binding DataContext.Story.HasDemoFrames, RelativeSource={RelativeSource AncestorType=views:ConnectionPage}}" />
+        <TextBlock Text="{Binding Pack.Status}" TextWrapping="Wrap" Margin="0,0,0,16" /><views:TextSourcePanel DataContext="{Binding TextSource}" StartReceptionCommand="{Binding DataContext.StartTextReceptionCommand, RelativeSource={RelativeSource AncestorType=views:ConnectionPage}}" />
+
       </StackPanel>
     </ScrollViewer>
   </Grid>

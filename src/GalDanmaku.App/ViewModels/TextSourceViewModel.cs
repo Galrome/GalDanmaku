@@ -11,7 +11,8 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
 {
     private readonly Func<Action, CancellationToken, Task> _dispatch;
     private readonly Func<bool, TextSourceOptions, ITextSource> _sourceFactory;
-    private readonly TextSourceOptions _defaultOptions;
+    private TextSourceOptions _defaultOptions;
+    private readonly string? _settingsPath;
     private CancellationTokenSource? _cancellation;
     private Task _runTask = Task.CompletedTask;
     private bool _disposed;
@@ -28,7 +29,9 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     private string _connectTimeout;
     private string _mergeGap;
     private TextSourceChoice _selectedSource;
-    private string _status = "未开始。模拟源无需安装 LunaTranslator。";
+    private string _status = "尚未开始接收 Luna 原文。";
+    private TextConnectionState? _connectionState;
+    private string _configurationNotice = "连接参数仅在本次会话中使用。";
     private string _latestText = "";
     private string _latestEvent = "尚无对话事件";
     private long _rawCount;
@@ -37,12 +40,13 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     private long _filteredCount;
 
     public TextSourceViewModel(TextSourceOptions options, Func<Action, CancellationToken, Task> dispatch,
-        Func<bool, TextSourceOptions, ITextSource>? sourceFactory = null)
+        Func<bool, TextSourceOptions, ITextSource>? sourceFactory = null, string? settingsPath = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(dispatch);
         _dispatch = dispatch;
         _defaultOptions = options;
+        _settingsPath = settingsPath;
         _sourceFactory = sourceFactory ?? ((mock, settings) => mock ? new MockTextSource(null, _mockScript) : new LunaTextSource(settings));
         _endpoint = options.Endpoint;
         _initialRetry = options.InitialRetryMilliseconds.ToString(CultureInfo.InvariantCulture);
@@ -50,7 +54,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         _connectTimeout = options.ConnectTimeoutMilliseconds.ToString(CultureInfo.InvariantCulture);
         _mergeGap = options.MergeGapMilliseconds.ToString(CultureInfo.InvariantCulture);
         Sources = [new("模拟文本演示", true), new("LunaTranslator 原文", false)];
-        _selectedSource = Sources[0];
+        _selectedSource = Sources[1];
         StartCommand = new AsyncRelayCommand(StartAsync, () => CanEdit);
         StopCommand = new AsyncRelayCommand(StopAsync, () => IsRunning && !_isStopping && !_disposed);
     }
@@ -66,8 +70,11 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     public string MaximumRetry { get => _maximumRetry; set { if (CanEdit) SetProperty(ref _maximumRetry, value); } }
     public string ConnectTimeout { get => _connectTimeout; set { if (CanEdit) SetProperty(ref _connectTimeout, value); } }
     public string MergeGap { get => _mergeGap; set { if (CanEdit) SetProperty(ref _mergeGap, value); } }
-    public string ConfigurationNotice { get; init; } = "界面修改仅本次运行有效；启动默认值读取程序目录的 text-source.json。";
+    public string ConfigurationNotice { get => _configurationNotice; init => _configurationNotice = value; }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
+    public string ConnectionText => _connectionState == TextConnectionState.Connected && _isRunning
+        ? "已连接" : _isRunning ? "正在连接或重连" : "未连接";
+    public string ReceptionText => _isRunning && RawCount > 0 ? "本次接收已收到原文" : _isRunning ? "等待原文" : "接收已停止";
     public bool IsRunning => _isRunning;
     public bool CanEdit => !_isRunning && !_disposed && _isAvailable;
     public bool IsAvailable => _isAvailable;
@@ -98,7 +105,8 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(cleaner);
         ArgumentNullException.ThrowIfNull(packName);
         if (_disposed || _isRunning) throw new InvalidOperationException("文本源仍在运行，无法应用游戏包配置。");
-        TextSourceOptions options = config.Options;
+        // Personal Luna connection settings survive automatic pack/window changes; pack cleaning stays active.
+        TextSourceOptions options = lunaOnly ? _defaultOptions : config.Options;
         _endpoint = options.Endpoint;
         _initialRetry = options.InitialRetryMilliseconds.ToString(CultureInfo.InvariantCulture);
         _maximumRetry = options.MaximumRetryMilliseconds.ToString(CultureInfo.InvariantCulture);
@@ -138,6 +146,11 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         Status = $"{reason} 可接收 Luna 原文；没有剧情索引，弹幕不可用。";
     }
 
+    public void UseTestDefaults()
+    {
+        ApplyPack(new GamePackTextSource(GamePackTextSourceKind.Mock, _defaultOptions, []), text => text, "独立测试");
+    }
+
     private void ClearCounters()
     {
         RawCount = NewCount = UpdateCount = FilteredCount = 0;
@@ -170,6 +183,23 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
                 MergeGapMilliseconds = ParseMilliseconds(MergeGap)
             };
             options.Validate();
+            if (!SelectedSource.IsMock) _defaultOptions = options;
+            if (!SelectedSource.IsMock && _settingsPath is not null)
+            {
+                try
+                {
+                    System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_settingsPath)!);
+                    string pending = _settingsPath + ".tmp";
+                    System.IO.File.WriteAllText(pending, System.Text.Json.JsonSerializer.Serialize(options));
+                    System.IO.File.Move(pending, _settingsPath, overwrite: true);
+                    SetProperty(ref _configurationNotice, "Luna 连接设置已保存，下次启动自动恢复。", nameof(ConfigurationNotice));
+                }
+                catch (Exception exception) when (exception is System.IO.IOException or UnauthorizedAccessException)
+                {
+                    RuntimeLog.Write(LogLevel.Warning, "TextSource", "SettingsSaveFailed", exception: exception);
+                    SetProperty(ref _configurationNotice, $"连接设置未能保存：{exception.Message}。本次仍可接收。", nameof(ConfigurationNotice));
+                }
+            }
         }
         catch (ArgumentException exception)
         {
@@ -182,6 +212,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         Status = "正在启动文本源…";
         ContextInvalidated?.Invoke(this, EventArgs.Empty);
         _cancellation = new CancellationTokenSource();
+        _connectionState = null;
         _isRunning = true;
         _isStopping = false;
         UpdateCommands();
@@ -223,10 +254,13 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
                         ContextInvalidated?.Invoke(this, EventArgs.Empty);
                     }
                     Status = connection.Detail;
+                    _connectionState = connection.State;
+                    OnPropertyChanged(nameof(ConnectionText));
                 }
                 else if (item is TextFrame frame)
                 {
                     RawCount++;
+                    OnPropertyChanged(nameof(ReceptionText));
                     long frameSequence = ++rawSequence;
                     using var frameScope = RuntimeLog.BeginScope(new LogContext(Sequence: frameSequence));
                     RuntimeLog.Write(LogLevel.Debug, "TextSource", "RawReceived", new { rawSequence = frameSequence, sequenceKind = "RawFrame", receivedAt = frame.ReceivedAt, source = sourceName, length = frame.Text?.Length, raw = RuntimeLog.Text(frame.Text) });
@@ -306,6 +340,8 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     {
         OnPropertyChanged(nameof(IsRunning));
         OnPropertyChanged(nameof(CanEdit));
+        OnPropertyChanged(nameof(ConnectionText));
+        OnPropertyChanged(nameof(ReceptionText));
         StartCommand.NotifyCanExecuteChanged();
         StopCommand.NotifyCanExecuteChanged();
     }

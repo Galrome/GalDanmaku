@@ -15,7 +15,7 @@ public sealed class DanmakuDisplay
         Text = count > 1 ? $"{representative.Text} ×{count.ToString(CultureInfo.InvariantCulture)}" : representative.Text;
         FontSize = count > 1
             ? Math.Min(64, DanmakuSettings.DefaultFontSize * (1 + Math.Min(0.75, 0.15 * Math.Log2(count))))
-            : DanmakuSettings.DefaultFontSize;
+            : representative.FontSize;
     }
 
     public string DisplayId { get; }

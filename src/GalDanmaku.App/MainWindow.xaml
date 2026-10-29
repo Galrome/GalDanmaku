@@ -29,8 +29,15 @@
           </StackPanel>
           <StackPanel Grid.Row="2">
             <Border Height="1" Background="#2B3440" Margin="4,0,4,12" />
+            <RadioButton x:Name="DeveloperNavigation" AutomationProperties.AutomationId="DeveloperNavigation" AutomationProperties.Name="开发测试" GroupName="ConsoleNavigation" Tag="Developer" Checked="OnNavigationChecked" ToolTip="开发测试">
+              <RadioButton.Style><Style TargetType="RadioButton" BasedOn="{StaticResource ConsoleNavigation}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsDeveloperMode}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></RadioButton.Style>
+              <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE943;" Style="{StaticResource NavigationIcon}" /><TextBlock x:Name="DeveloperLabel" Text="开发测试" VerticalAlignment="Center" /></StackPanel>
+            </RadioButton>
             <RadioButton x:Name="DiagnosticsNavigation" AutomationProperties.AutomationId="DiagnosticsNavigation" AutomationProperties.Name="高级诊断" GroupName="ConsoleNavigation" Style="{StaticResource ConsoleNavigation}" Tag="Diagnostics" Checked="OnNavigationChecked" ToolTip="高级诊断">
               <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE9D9;" Style="{StaticResource NavigationIcon}" /><TextBlock x:Name="DiagnosticsLabel" Text="高级诊断" VerticalAlignment="Center" /></StackPanel>
+            </RadioButton>
+            <RadioButton x:Name="StorageNavigation" AutomationProperties.AutomationId="StorageNavigation" AutomationProperties.Name="本地存储说明" GroupName="ConsoleNavigation" Style="{StaticResource ConsoleNavigation}" Tag="Storage" Checked="OnNavigationChecked" ToolTip="本地存储说明">
+              <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8B7;" Style="{StaticResource NavigationIcon}" /><TextBlock x:Name="StorageLabel" Text="本地存储说明" VerticalAlignment="Center" /></StackPanel>
             </RadioButton>
             <TextBlock x:Name="StorageCaption" Text="弹幕仅保存在本机" Style="{StaticResource ConsoleCaption}" Margin="12,12,0,4" />
           </StackPanel>

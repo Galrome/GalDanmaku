@@ -9,19 +9,6 @@
     <TextBlock AutomationProperties.AutomationId="StoryOffset" Text="{Binding OffsetText}" Style="{StaticResource ConsoleCaption}" Margin="0,6,0,0" />
     <TextBlock Text="{Binding HistoryCount, StringFormat=历史上下文：{0} 句}" Style="{StaticResource ConsoleCaption}" Margin="0,6,0,0" />
     <TextBlock AutomationProperties.AutomationId="StoryIndexStatus" Text="{Binding IndexStatus}" Style="{StaticResource ConsoleCaption}" Margin="0,12,0,0" />
-    <Expander Header="导入独立索引（仅定位调试）" Margin="0,12,0,0"><StackPanel Margin="0,8,0,0">
-      <TextBlock Text="仅在没有活动游戏包时可导入；独立索引不会绑定或发送弹幕。" Style="{StaticResource ConsoleCaption}" Margin="0,0,0,8" />
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-        <TextBox AutomationProperties.AutomationId="StoryIndexPath" AutomationProperties.Name="剧情索引路径" Text="{Binding IndexPath, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanImport}" Margin="0,0,8,0" />
-        <ui:Button Grid.Column="1" Content="浏览…" Click="OnBrowseIndex" IsEnabled="{Binding CanImport}" Margin="0,0,8,0" />
-        <ui:Button Grid.Column="2" AutomationProperties.AutomationId="LoadStoryIndexButton" Content="加载索引" Command="{Binding LoadCommand}" />
-      </Grid>
-    </StackPanel></Expander>
-    <Expander Header="手动输入测试" Margin="0,12,0,0"><StackPanel Margin="0,8,0,0">
-      <TextBlock Text="先在概览取消「使用实时文本定位」，再输入测试原文。逐句演示也可在概览操作。" Style="{StaticResource ConsoleCaption}" Margin="0,0,0,8" />
-      <TextBox AutomationProperties.AutomationId="ManualStoryText" AutomationProperties.Name="手动测试原文" Text="{Binding ManualText, UpdateSourceTrigger=PropertyChanged}" MaxLength="65536" IsEnabled="{Binding CanInput}" TextWrapping="Wrap" MinHeight="64" MaxHeight="160" VerticalScrollBarVisibility="Auto" />
-      <WrapPanel Margin="0,8,0,0"><ui:Button Content="作为新对话输入" Command="{Binding NewDialogueCommand}" Margin="0,0,8,0" /><ui:Button Content="更新当前对话" Command="{Binding UpdateDialogueCommand}" /></WrapPanel>
-    </StackPanel></Expander>
     <ui:Button Content="重置定位上下文" Command="{Binding ResetCommand}" HorizontalAlignment="Left" Margin="0,12,0,0" />
     <TextBlock Text="读档或跳转后可重置上下文；未知或有歧义时弹幕会暂停并解绑节点。" Style="{StaticResource ConsoleCaption}" Margin="0,10,0,0" />
   </StackPanel></Border>

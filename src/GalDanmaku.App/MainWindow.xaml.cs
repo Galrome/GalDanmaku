@@ -26,7 +26,7 @@ public partial class MainWindow : FluentWindow
         InitializeComponent();
         _viewModel = new MainViewModel();
         DataContext = _viewModel;
-        _viewModel.DemoStarted += (_, _) => OverviewNavigation.IsChecked = true;
+        _viewModel.PropertyChanged += OnViewModelChanged;
         _composer = new FloatingComposerWindow(_viewModel, ShowBackground);
         var overview = new OverviewPage();
         overview.ConnectionRequested += (_, _) => ConnectionNavigation.IsChecked = true;
@@ -34,6 +34,8 @@ public partial class MainWindow : FluentWindow
         _pages.Add("Connection", new ConnectionPage());
         _pages.Add("Appearance", new AppearancePage());
         _pages.Add("Diagnostics", new DiagnosticsPage());
+        _pages.Add("Developer", new DeveloperPage());
+        _pages.Add("Storage", new StoragePage());
         PageHost.Content = overview;
         Loaded += (_, _) => _viewModel.InitializeCommand.Execute(null);
     }
@@ -92,13 +94,19 @@ public partial class MainWindow : FluentWindow
             PageHost.Content = page;
     }
 
+    private void OnViewModelChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(MainViewModel.IsDeveloperMode) && !_viewModel.IsDeveloperMode
+            && DeveloperNavigation.IsChecked == true) OverviewNavigation.IsChecked = true;
+    }
+
     private void OnWindowSizeChanged(object sender, SizeChangedEventArgs args)
     {
         if (NavigationColumn is null || OverviewLabel is null) return;
         bool compact = ActualWidth < 860;
         NavigationColumn.Width = new GridLength(compact ? 64 : 176);
         Visibility labelVisibility = compact ? Visibility.Collapsed : Visibility.Visible;
-        foreach (TextBlock label in new[] { OverviewLabel, ConnectionLabel, AppearanceLabel, DiagnosticsLabel, StorageCaption })
+        foreach (TextBlock label in new[] { OverviewLabel, ConnectionLabel, AppearanceLabel, DeveloperLabel, DiagnosticsLabel, StorageLabel, StorageCaption })
             label.Visibility = labelVisibility;
     }
 

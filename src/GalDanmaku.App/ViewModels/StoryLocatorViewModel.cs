@@ -48,7 +48,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
         _indexPath = defaultIndexPath;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _loader = loader ?? StoryIndex.LoadAsync;
-        Scenarios = [new("route-a", "路线 A"), new("route-b", "路线 B"), new("load-repeat", "读档至重复台词"), new("typing", "逐字输出")];
+        Scenarios = [new("route-a", "剧情路线 A"), new("route-b", "剧情路线 B"), new("load-repeat", "读档至重复台词"), new("typing", "逐字输出")];
         _selectedScenario = Scenarios[0];
         LoadCommand = new AsyncRelayCommand(LoadAsync, () => CanImport);
         ResetCommand = new RelayCommand(Reset, () => !_disposed);
@@ -89,7 +89,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
         StoryLocationStatus.Ambiguous => "Ambiguous · 存在多个候选",
         _ => "Unknown · 未确认"
     };
-    public string Reason => _locator?.Current.Reason ?? "加载索引后，可逐句演示或使用实时文本。";
+    public string Reason => _locator?.Current.Reason ?? "当前没有可用剧情索引。可接收原文，确认剧情节点后才可发送弹幕。";
     public string NodeText => CurrentNodeId ?? "—";
     public string CandidateText => _locator is null || _locator.Current.Candidates.Count == 0 ? "无"
         : string.Join("、", _locator.Current.Candidates.Take(12).Select(node => node.Id))
@@ -230,7 +230,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
 
     private void OnDialogueReceived(object? sender, DialogueEvent dialogue)
     {
-        using var scope = RuntimeLog.BeginScope(new LogContext(TextSessionId: dialogue.SessionId.ToString(), DialogueId: dialogue.DialogueId, Sequence: dialogue.Sequence));
+        using var scope = RuntimeLog.BeginScope(new LogContext(GameId: _index?.GameId, TextSessionId: dialogue.SessionId.ToString(), DialogueId: dialogue.DialogueId, Sequence: dialogue.Sequence));
         RuntimeLog.Write(LogLevel.Debug, "StoryLocatorViewModel", "DialogueReceived", new { kind = dialogue.Kind.ToString(), eventSequence = dialogue.Sequence, receivedAt = dialogue.ReceivedAt, hasIndex = _locator is not null, isLiveMode = IsLiveMode });
         if (_disposed || !IsLiveMode || _locator is null)
         {
@@ -272,7 +272,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
         LatestText = text;
         var dialogue = new DialogueEvent(_sessionId, _dialogueId, ++_sequence, _timeProvider.GetUtcNow(),
             update ? DialogueEventKind.TextUpdated : DialogueEventKind.NewDialogue, text);
-        using var scope = RuntimeLog.BeginScope(new LogContext(TextSessionId: dialogue.SessionId.ToString(), DialogueId: dialogue.DialogueId, Sequence: dialogue.Sequence));
+        using var scope = RuntimeLog.BeginScope(new LogContext(GameId: _index?.GameId, TextSessionId: dialogue.SessionId.ToString(), DialogueId: dialogue.DialogueId, Sequence: dialogue.Sequence));
         RuntimeLog.Write(LogLevel.Debug, "StoryLocatorViewModel", "ManualDialogueReceived", new { kind = dialogue.Kind.ToString(), length = text.Length, text = RuntimeLog.Text(text) });
         _locator!.Process(dialogue);
         using var locationScope = RuntimeLog.BeginScope(new LogContext(NodeId: CurrentNodeId));
@@ -281,6 +281,14 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
 
     private IReadOnlyList<(string Text, bool Update)> DemoFrames()
     {
+        if (_index?.GameId == "phase5-synthetic-b")
+        {
+            if (SelectedScenario.Id == "typing" && _index.Nodes.TryGetValue("b:start", out var start) && start.Text.Length >= 3)
+                return [(start.Text[..1], false), (start.Text[..3], true), (start.Text, true)];
+            string[] routeIds = ["b:start", SelectedScenario.Id == "route-b" ? "b:right" : "b:left", "b:end"];
+            return routeIds.All(id => _index.Nodes.ContainsKey(id))
+                ? routeIds.Select(id => (_index.Nodes[id].Text, false)).ToArray() : [];
+        }
         if (_index?.GameId != "phase4-synthetic") return [];
         if (SelectedScenario.Id == "typing")
         {
