@@ -1,0 +1,61 @@
+<Window x:Class="GalDanmaku.App.Floating.FloatingComposerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="GalDanmaku 游戏旁发送条" AutomationProperties.AutomationId="FloatingComposerWindow" WindowStyle="None" ResizeMode="NoResize"
+        Width="680" Height="60" ShowInTaskbar="False" ShowActivated="False" Topmost="True"
+        Background="#20242B" Foreground="#F3F5F8">
+  <Border BorderBrush="#426474" BorderThickness="1" CornerRadius="8" Padding="8">
+    <Grid>
+      <Grid x:Name="ExpandedContent">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+        <Border Background="Transparent" Cursor="SizeAll" Padding="3,0" Margin="0,0,4,0" PreviewMouseLeftButtonDown="DragHandle_OnMouseLeftButtonDown" ToolTip="拖动发送条">
+          <Path Width="8" Height="16" Stroke="#AEB8C5" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center"
+                Data="M 1,2 L 1,2.1 M 7,2 L 7,2.1 M 1,8 L 1,8.1 M 7,8 L 7,8.1 M 1,14 L 1,14.1 M 7,14 L 7,14.1" />
+        </Border>
+        <TextBlock Grid.Column="1" x:Name="NodeLabel" AutomationProperties.AutomationId="FloatingNodeStatusText" Text="{Binding ComposerNodeText}" ToolTip="{Binding BoundNodeText}" Margin="0,0,8,0" VerticalAlignment="Center" FontSize="12" Foreground="#80D8FF" />
+        <Grid Grid.Column="2">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <ui:Button x:Name="StyleButton" AutomationProperties.AutomationId="FloatingStyleButton" Content="Aa" ToolTip="弹幕样式与播放显示" Padding="7,4" Click="StyleButton_OnClick" Margin="0,0,6,0" />
+          <Grid Grid.Column="1">
+            <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <TextBox x:Name="ComposerInput" AutomationProperties.AutomationId="FloatingCommentInput" Text="{Binding DraftText, UpdateSourceTrigger=PropertyChanged}" MaxLength="500"
+                     IsEnabled="{Binding IsLocalIdle}" AutomationProperties.Name="游戏旁弹幕内容" MinWidth="0" MinHeight="0" Padding="8,3" VerticalContentAlignment="Center" ToolTip="最多500字；定位到确认节点后可发送" />
+            <TextBlock Grid.Row="1" Text="弹幕播放已暂停" x:Name="PausedLabel" Foreground="#80D8FF" FontSize="10" Visibility="Collapsed" Margin="2,1,0,0" />
+            <TextBlock Grid.Row="1" x:Name="FeedbackLabel" AutomationProperties.AutomationId="FloatingSendStatusText" Foreground="#80D8FF" FontSize="10" TextTrimming="CharacterEllipsis" Visibility="Collapsed" Margin="2,1,0,0" />
+          </Grid>
+          <ui:Button Grid.Column="2" AutomationProperties.AutomationId="FloatingSendCommentButton" Content="发送" Appearance="Primary" Command="{Binding SendCommand}" Margin="6,0,0,0" Padding="10,4" AutomationProperties.Name="游戏旁发送弹幕" />
+          <ui:Button Grid.Column="3" AutomationProperties.AutomationId="FloatingBackgroundButton" ToolTip="打开后台控制台" AutomationProperties.Name="打开后台控制台" Click="BackgroundButton_OnClick" Margin="6,0,0,0" Padding="7,4">
+            <ui:SymbolIcon Symbol="Settings24" FontSize="16" />
+          </ui:Button>
+          <ui:Button Grid.Column="4" AutomationProperties.AutomationId="FloatingCollapseButton" ToolTip="收起发送条" AutomationProperties.Name="收起发送条" Click="CollapseButton_OnClick" Margin="6,0,0,0" Padding="7,4">
+            <ui:SymbolIcon Symbol="Subtract24" FontSize="16" />
+          </ui:Button>
+        </Grid>
+      </Grid>
+      <ui:Button x:Name="CollapsedHandle" AutomationProperties.AutomationId="FloatingExpandButton" Content="弹幕" ToolTip="点击展开，拖动调整位置" Click="ExpandButton_OnClick" Visibility="Collapsed" Padding="8,2"
+                 PreviewMouseLeftButtonDown="CollapsedHandle_OnMouseLeftButtonDown" />
+      <Popup x:Name="StylePopup" PlacementTarget="{Binding ElementName=StyleButton}" Placement="Custom" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
+        <Border x:Name="PopupSurface" Background="#252A33" BorderBrush="#426474" BorderThickness="1" CornerRadius="8" Padding="14" Width="320">
+          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+              <TextBlock Text="新发送弹幕" FontWeight="SemiBold" Foreground="#80D8FF" Margin="0,0,0,8" />
+              <TextBlock Text="{Binding FontSize, StringFormat=字号 · {0:0} DIP}" />
+              <Slider AutomationProperties.AutomationId="FloatingFontSizeSlider" Minimum="12" Maximum="64" Value="{Binding FontSize}" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,6,0,10" AutomationProperties.Name="浮条字号" />
+              <ComboBox AutomationProperties.AutomationId="FloatingCommentColorComboBox" ItemsSource="{Binding Colors}" SelectedItem="{Binding SelectedColor}" DisplayMemberPath="Label" AutomationProperties.Name="浮条颜色" />
+              <TextBlock Text="播放显示" FontWeight="SemiBold" Foreground="#80D8FF" Margin="0,16,0,8" />
+              <TextBlock Text="{Binding OpacityPercent, StringFormat=不透明度 · {0:0}%}" />
+              <Slider AutomationProperties.AutomationId="FloatingOpacitySlider" Minimum="10" Maximum="100" Value="{Binding OpacityPercent}" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,6,0,10" AutomationProperties.Name="浮条不透明度" />
+              <TextBlock Text="{Binding Speed, StringFormat=速度 · {0:0} DIP/s}" />
+              <Slider AutomationProperties.AutomationId="FloatingSpeedSlider" Minimum="40" Maximum="400" Value="{Binding Speed}" TickFrequency="10" IsSnapToTickEnabled="True" Margin="0,6,0,10" AutomationProperties.Name="浮条速度" />
+              <ComboBox AutomationProperties.AutomationId="FloatingDisplayAreaComboBox" ItemsSource="{Binding Areas}" SelectedItem="{Binding SelectedArea}" DisplayMemberPath="Label" AutomationProperties.Name="浮条显示区域" />
+              <TextBlock Text="仅影响播放显示；已保存弹幕保留字号与颜色。" TextWrapping="Wrap" Margin="0,12,0,0" FontSize="11" Foreground="#AEB8C5" />
+            </StackPanel>
+          </ScrollViewer>
+        </Border>
+      </Popup>
+    </Grid>
+  </Border>
+</Window>

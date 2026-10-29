@@ -1,0 +1,29 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
+  <!-- Scoped to the console; the overlay and composer keep their own styles. -->
+  <Style x:Key="ConsoleCard" TargetType="Border">
+    <Setter Property="Padding" Value="16" /><Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Background" Value="#1C232D" /><Setter Property="BorderBrush" Value="#303A46" /><Setter Property="BorderThickness" Value="1" />
+  </Style>
+  <Style x:Key="ConsoleTitle" TargetType="TextBlock"><Setter Property="FontSize" Value="24" /><Setter Property="FontWeight" Value="SemiBold" /></Style>
+  <Style x:Key="ConsoleSectionTitle" TargetType="TextBlock"><Setter Property="FontSize" Value="16" /><Setter Property="FontWeight" Value="SemiBold" /><Setter Property="Margin" Value="0,0,0,12" /></Style>
+  <Style x:Key="ConsoleCaption" TargetType="TextBlock"><Setter Property="Foreground" Value="#A4B1C1" /><Setter Property="FontSize" Value="12" /><Setter Property="TextWrapping" Value="Wrap" /></Style>
+  <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}"><Setter Property="MinHeight" Value="36" /><Setter Property="Padding" Value="12,6" /><Setter Property="FontSize" Value="14" /></Style>
+  <Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}"><Setter Property="MinHeight" Value="36" /><Setter Property="VerticalContentAlignment" Value="Center" /><Setter Property="FontSize" Value="14" /></Style>
+  <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}"><Setter Property="MinHeight" Value="36" /><Setter Property="VerticalContentAlignment" Value="Center" /><Setter Property="FontSize" Value="14" /></Style>
+  <Style x:Key="NavigationIcon" TargetType="TextBlock"><Setter Property="FontFamily" Value="Segoe MDL2 Assets" /><Setter Property="FontSize" Value="19" /><Setter Property="Width" Value="28" /><Setter Property="VerticalAlignment" Value="Center" /></Style>
+  <Style x:Key="ConsoleNavigation" TargetType="RadioButton">
+    <Setter Property="Foreground" Value="#BDC8D6" /><Setter Property="FontSize" Value="14" /><Setter Property="Margin" Value="0,0,0,6" /><Setter Property="MinHeight" Value="44" /><Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="Template"><Setter.Value>
+      <ControlTemplate TargetType="RadioButton">
+        <Border x:Name="Surface" Background="Transparent" CornerRadius="7" Padding="10,8" BorderThickness="2,0,0,0" BorderBrush="Transparent"><ContentPresenter VerticalAlignment="Center" /></Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#252F3B" /></Trigger>
+          <Trigger Property="IsChecked" Value="True"><Setter TargetName="Surface" Property="Background" Value="#193849" /><Setter TargetName="Surface" Property="BorderBrush" Value="#56CCE8" /><Setter Property="Foreground" Value="#DDF7FF" /></Trigger>
+          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="#A4DDEC" /></Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate>
+    </Setter.Value></Setter>
+  </Style>
+</ResourceDictionary>

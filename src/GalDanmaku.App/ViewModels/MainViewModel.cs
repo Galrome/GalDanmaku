@@ -15,7 +15,7 @@ using Microsoft.Data.Sqlite;
 
 namespace GalDanmaku.App.ViewModels;
 
-public sealed class MainViewModel : ObservableObject, IAsyncDisposable
+public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 {
     private readonly WindowTracker _tracker = new();
     private readonly OverlayWindow _overlay;
@@ -69,6 +69,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         RefreshCommand = new RelayCommand(Refresh);
         BindCommand = new RelayCommand(Bind, () => SelectedWindow is not null && !IsBound);
         UnbindCommand = new RelayCommand(Unbind, () => IsBound);
+        ShowFloatingComposerCommand = new RelayCommand(RequestFloatingComposer);
         _tracker.Changed += OnWindowChanged;
         Refresh();
     }
@@ -280,6 +281,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(CoordinatorText));
         OnPropertyChanged(nameof(SavedCount));
         OnPropertyChanged(nameof(NodeTime));
+        OnPropertyChanged(nameof(ComposerNodeText));
         SendCommand.NotifyCanExecuteChanged();
         ReplayCommand.NotifyCanExecuteChanged();
     }
@@ -293,6 +295,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
         NodeBindingCoordinator coordinator = Pack.Coordinator!;
         string draft = DraftText;
+        var attempt = new ComposerSendEventArgs(_lastSnapshot?.Target);
+        CommentSendStarted?.Invoke(this, attempt);
+        bool savedSuccessfully = false;
         SetLocalBusy(true);
         LocalStatus = "正在保存弹幕…";
         try
@@ -301,6 +306,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             if (_disposed) return;
             if (DraftText == draft) DraftText = "";
             LocalStatus = $"已保存到节点 {saved.NodeId} · {saved.OffsetMilliseconds / 1000.0:0.0} 秒。切回目标窗口播放。";
+            savedSuccessfully = true;
         }
         catch (OperationCanceledException) when (_disposed)
         {
@@ -314,6 +320,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         {
             if (!_disposed) SetLocalBusy(false);
         }
+        // UI focus restoration happens after persistence handling and cannot turn a committed save into a data error.
+        if (savedSuccessfully && !_disposed) CommentSaved?.Invoke(this, attempt);
     }
 
     private void SetLocalBusy(bool value)
@@ -391,6 +399,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private void OnWindowChanged(object? sender, WindowSnapshot snapshot)
     {
         _lastSnapshot = snapshot;
+        WindowSnapshotChanged?.Invoke(this, snapshot);
         IsBound = snapshot.State is not (TargetState.Unbound or TargetState.Closed);
         BoundTarget = IsBound ? $"{snapshot.Target!.ProcessName} · {snapshot.Target.Title}" : "未绑定窗口";
         // A window that closed on its own must not stay selectable in the list.

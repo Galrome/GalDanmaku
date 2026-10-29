@@ -72,21 +72,22 @@ public sealed class WindowTracker : IDisposable
             return;
         }
 
+        nint foreground = NativeMethods.GetForegroundWindow();
         TargetState state = NativeMethods.IsIconic(target.Handle) ? TargetState.Minimized
             : !NativeMethods.IsWindowVisible(target.Handle) || NativeMethods.IsCloaked(target.Handle) ? TargetState.Hidden
-            : NativeMethods.GetForegroundWindow() != target.Handle ? TargetState.NotForeground
+            : foreground != target.Handle ? TargetState.NotForeground
             : TargetState.Visible;
 
-        if (state != TargetState.Visible)
+        if (state is not (TargetState.Visible or TargetState.NotForeground))
         {
-            Publish(new WindowSnapshot(target, state, default));
+            Publish(new WindowSnapshot(target, state, default, foreground));
             return;
         }
 
         // PerMonitorV2 keeps both endpoints in physical screen pixels, even for DPI-unaware targets.
         if (!NativeMethods.GetClientRect(target.Handle, out NativeMethods.NativeRectangle rectangle))
         {
-            Publish(new WindowSnapshot(target, TargetState.Unavailable, default));
+            Publish(new WindowSnapshot(target, TargetState.Unavailable, default, foreground));
             return;
         }
 
@@ -95,12 +96,12 @@ public sealed class WindowTracker : IDisposable
         if (!NativeMethods.ClientToScreen(target.Handle, ref origin) ||
             !NativeMethods.ClientToScreen(target.Handle, ref end) || end.X <= origin.X || end.Y <= origin.Y)
         {
-            Publish(new WindowSnapshot(target, TargetState.Unavailable, default));
+            Publish(new WindowSnapshot(target, TargetState.Unavailable, default, foreground));
             return;
         }
 
-        Publish(new WindowSnapshot(target, TargetState.Visible,
-            new ClientBounds(origin.X, origin.Y, end.X - origin.X, end.Y - origin.Y)));
+        Publish(new WindowSnapshot(target, state,
+            new ClientBounds(origin.X, origin.Y, end.X - origin.X, end.Y - origin.Y), foreground));
     }
 
     private void Publish(WindowSnapshot snapshot)

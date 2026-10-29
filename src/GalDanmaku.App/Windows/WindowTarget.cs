@@ -18,4 +18,4 @@ public enum TargetState
     Closed,
 }
 
-public sealed record WindowSnapshot(WindowTarget? Target, TargetState State, ClientBounds Bounds);
+public sealed record WindowSnapshot(WindowTarget? Target, TargetState State, ClientBounds Bounds, nint ForegroundHandle = default);

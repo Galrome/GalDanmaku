@@ -13,6 +13,7 @@
     <Compile Include="../../src/GalDanmaku.App/ViewModels/TextSourceViewModel.cs" Link="TextSourceViewModel.cs" />
     <Compile Include="../../src/GalDanmaku.App/ViewModels/StoryLocatorViewModel.cs" Link="StoryLocatorViewModel.cs" />
     <Compile Include="../../src/GalDanmaku.App/ViewModels/GamePackViewModel.cs" Link="GamePackViewModel.cs" />
+    <Compile Include="../../src/GalDanmaku.App/Floating/ComposerPolicy.cs" Link="ComposerPolicy.cs" />
     <ProjectReference Include="../../src/GalDanmaku.Core/GalDanmaku.Core.csproj" />
     <ProjectReference Include="../../src/GalDanmaku.Storage/GalDanmaku.Storage.csproj" />
     <Using Include="Xunit" />
