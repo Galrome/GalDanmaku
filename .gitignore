@@ -16,6 +16,7 @@ assets/game-mappings/local-debug.json
 game-mappings.local.json
 *.jsonl
 luna-settings.json
+luna-library-location.txt
 game-mapping-location.txt
 /README.md
 /docs/

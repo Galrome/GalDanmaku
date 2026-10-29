@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using GalDanmaku.Core;
 using GalDanmaku.Core.GamePacks;
+using GalDanmaku.Core.GameIdentity;
 using GalDanmaku.Core.Diagnostics;
 
 namespace GalDanmaku.App.ViewModels;
@@ -20,7 +21,7 @@ public sealed record GamePackItem(GamePackEntry Entry)
 // Owns the single active game pack and everything derived from it: story index, text source
 // configuration and the node binding coordinator. Contains no WPF types so it can be unit tested.
 // All members must be used on the owning (UI) thread.
-public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
+public sealed partial class GamePackViewModel : ObservableObject, IAsyncDisposable
 {
     private readonly LocalCommentSession _session;
     private readonly TextSourceViewModel _textSource;
@@ -30,6 +31,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     private string _mappingPath;
     private bool _explicitMappingPath;
     private readonly bool _developerSession;
+    private readonly string _identitySettingsDirectory;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly List<Task> _inflight = [];
     private CancellationTokenSource? _loadCancellation;
@@ -48,7 +50,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
 
     public GamePackViewModel(LocalCommentSession session, TextSourceViewModel textSource, StoryLocatorViewModel story,
         Func<string, CancellationToken, Task<LoadedGamePack>>? loader = null, IReadOnlyList<string>? roots = null,
-        string? mappingPath = null, bool developerSession = false)
+        string? mappingPath = null, bool developerSession = false, string? identitySettingsDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(textSource);
@@ -59,12 +61,14 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         _loader = loader ?? GamePackLoader.LoadAsync;
         _roots = roots ?? [];
         _developerSession = developerSession;
+        _identitySettingsDirectory = identitySettingsDirectory ?? ApplicationDataPaths.SettingsDirectory;
         _explicitMappingPath = mappingPath is not null;
         _mappingPath = mappingPath ?? ResolveMappingPath();
         _story.LocationChanged += OnLocationChanged;
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !_disposed && !_isRefreshing);
         LoadCommand = new AsyncRelayCommand(LoadSelectedAsync, () => !_disposed && SelectedPack is { IsSelectable: true } item && CanLoadItem(item),
             AsyncRelayCommandOptions.AllowConcurrentExecutions);
+        InitializeGameLibrary();
         // Unindexed reception is available immediately; comments still require an indexed, confirmed node.
         if (developerSession) _textSource.UseTestDefaults();
         else _textSource.UseUnindexedLuna("选择游戏窗口后自动识别游戏适配包。");
@@ -101,7 +105,11 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         get => _selectedPack;
         set
         {
-            if (SetProperty(ref _selectedPack, value)) LoadCommand.NotifyCanExecuteChanged();
+            if (SetProperty(ref _selectedPack, value))
+            {
+                LoadCommand.NotifyCanExecuteChanged();
+                ConfirmAssociationCommand.NotifyCanExecuteChanged();
+            }
         }
     }
 
@@ -154,8 +162,8 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
 
     public Task LoadSelectedAsync() => SelectedPack is { IsSelectable: true } item ? LoadPackAsync(item.Directory) : Task.CompletedTask;
 
-    private bool CanLoadItem(GamePackItem item) => !_windowBound
-        || _requiredGameId is not null && string.Equals(item.Entry.GameId, _requiredGameId, StringComparison.Ordinal);
+    private bool CanLoadItem(GamePackItem item) => !_windowBound ? _developerSession
+        : _requiredGameId is not null && string.Equals(item.Entry.GameId, _requiredGameId, StringComparison.Ordinal);
 
     // These entry points synchronously revoke the previous index before any asynchronous work starts.
     public Task BindWindowAsync(string? executablePath, string? identityError = null)
@@ -163,6 +171,8 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_explicitMappingPath) SetProperty(ref _mappingPath, ResolveMappingPath(), nameof(MappingPath));
         _windowBound = true;
+        _boundExecutablePath = executablePath;
+        ClearIdentityCandidates();
         if (!_developerSession) RuntimeLog.SetGameId(null);
         RuntimeLog.Write(LogLevel.Information, "GamePack", "GameRecognitionStarted", new { executablePath, identityError });
         _requiredGameId = null;
@@ -175,6 +185,8 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     {
         if (_disposed) return Task.CompletedTask;
         _windowBound = false;
+        _boundExecutablePath = null;
+        ClearIdentityCandidates();
         RuntimeLog.Write(LogLevel.Information, "GamePack", "GameContextCleared", new { reason = "WindowUnboundOrClosed" });
         if (!_developerSession) RuntimeLog.SetGameId(null);
         _requiredGameId = null;
@@ -210,29 +222,20 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         {
             await _textSource.StopAsync();
             if (IsStale(generation)) return;
-            LocalGameMatch match;
-            if (string.IsNullOrWhiteSpace(executablePath))
-                match = new(LocalGameMatchStatus.Unknown, null, identityError is null
-                    ? "无法读取进程路径，未识别游戏。" : $"无法读取进程路径，未识别游戏：{identityError}");
-            else
+            (LocalGameMappings mappings, string? mappingError) = await ReadMappingsAsync(cancellation.Token);
+            IReadOnlyList<GameLibraryEntry> library = await ReadLibraryAsync(cancellation.Token);
+            if (IsStale(generation)) return;
+            GameIdentityResult identity = GameIdentityResolver.Resolve(executablePath, mappings, library);
+            ApplyIdentity(identity);
+            if (_requiredGameId is null)
             {
-                LocalGameMappings mappings = await Task.Run(() => LocalGameMappings.LoadAsync(_mappingPath, cancellation.Token), cancellation.Token);
-                if (IsStale(generation)) return;
-                match = mappings.Match(executablePath);
-            }
-            if (match.Game is not { } game)
-            {
-                RuntimeLog.Write(LogLevel.Warning, "GamePack", "GameRecognitionUncertain", new { status = match.Status.ToString(), match.Reason });
-                _identitySummary = match.Status == LocalGameMatchStatus.Ambiguous ? "游戏识别存在歧义" : "未识别游戏";
-                UseUnindexedLuna(match.Reason);
+                UseUnindexedLuna(mappingError ?? (identityError is null ? identity.Reason : identity.Reason + " " + identityError));
                 return;
             }
 
-            _identitySummary = $"已识别：{game.DisplayName}";
-            _requiredGameId = game.RequiredGamePackId;
-            RuntimeLog.SetGameId(game.Id);
-            using var recognizedGame = RuntimeLog.BeginScope(new LogContext(GameId: game.Id));
-            RuntimeLog.Write(LogLevel.Information, "GamePack", "GameRecognized", new { game.Id, game.DisplayName, requiredGamePackId = _requiredGameId });
+            RuntimeLog.SetGameId(_requiredGameId);
+            using var recognizedGame = RuntimeLog.BeginScope(new LogContext(GameId: _requiredGameId));
+            RuntimeLog.Write(LogLevel.Information, "GamePack", "GameRecognized", new { requiredGamePackId = _requiredGameId, source = identity.Source });
             LoadCommand.NotifyCanExecuteChanged();
             var candidates = new List<GamePackEntry>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -269,7 +272,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
                 UseUnindexedLuna("尚无本地游戏识别配置，当前仅绑定游戏窗口。");
             }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException)
         {
             RuntimeLog.Write(LogLevel.Error, "GamePack", "GameRecognitionFailed", new { generation, stale = IsStale(generation) }, exception);
             if (!IsStale(generation))
@@ -339,10 +342,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
             if (requiredGameId is not null && (!string.Equals(loaded.Pack.GameId, requiredGameId, StringComparison.Ordinal)
                 || !string.Equals(loaded.Index.GameId, requiredGameId, StringComparison.Ordinal)))
                 throw new InvalidDataException("剧情包 GameId 与已识别游戏不一致，已拒绝加载。");
-            if (requiredGameId is not null && (loaded.Pack.TextSource.Kind == GamePackTextSourceKind.Mock
-                || string.Equals(loaded.Pack.Engine, "Synthetic", StringComparison.OrdinalIgnoreCase)
-                || loaded.Pack.GameId.Contains("synthetic", StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidDataException("真实窗口不能关联模拟游戏包或模拟文本源。");
+            if (requiredGameId is not null) ValidateRealWindowPack(loaded.Pack);
             // A cancelled node load of the previous coordinator may still hold the session busy.
             while (_session.IsBusy)
             {
@@ -424,6 +424,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         if (_isLoading == value) return;
         _isLoading = value;
         OnPropertyChanged(nameof(IsLoading));
+        ConfirmAssociationCommand.NotifyCanExecuteChanged();
     }
 
     private void OnLocationChanged(object? sender, StoryLocationChangedEventArgs args)

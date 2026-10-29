@@ -10,6 +10,7 @@
     <PackageReference Include="WPF-UI" Version="4.3.0" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <ProjectReference Include="../GalDanmaku.Core/GalDanmaku.Core.csproj" />
+    <ProjectReference Include="../GalDanmaku.Integrations/GalDanmaku.Integrations.csproj" />
     <ProjectReference Include="../GalDanmaku.Storage/GalDanmaku.Storage.csproj" />
     <Content Include="../../licenses/**/*.txt" Link="licenses/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="../../tests/GalDanmaku.Tests/Fixtures/**" Condition="'$(IncludeDeveloperFixtures)' == 'true'" Link="developer-fixtures/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
