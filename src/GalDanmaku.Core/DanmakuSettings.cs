@@ -2,7 +2,10 @@ namespace GalDanmaku.Core;
 
 public sealed record DanmakuSettings
 {
-    public DanmakuSettings(double fontSize = 28, double opacity = 0.9, double speed = 140, double areaFraction = 0.5)
+    public const double DefaultFontSize = 28;
+
+    public DanmakuSettings(double fontSize = DefaultFontSize, double opacity = 0.9, double speed = 140, double areaFraction = 0.5,
+        bool aggregationEnabled = false)
     {
         ValidateRange(fontSize, 12, 64, nameof(fontSize));
         ValidateRange(opacity, 0.1, 1, nameof(opacity));
@@ -12,12 +15,14 @@ public sealed record DanmakuSettings
         Opacity = opacity;
         Speed = speed;
         AreaFraction = areaFraction;
+        AggregationEnabled = aggregationEnabled;
     }
 
     public double FontSize { get; }
     public double Opacity { get; }
     public double Speed { get; }
     public double AreaFraction { get; }
+    public bool AggregationEnabled { get; }
 
     private static void ValidateRange(double value, double minimum, double maximum, string parameterName)
     {

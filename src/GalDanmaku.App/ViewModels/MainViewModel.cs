@@ -30,7 +30,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private bool _disposed;
     private string _status = "选择一个窗口，然后绑定。";
     private string _boundTarget = "未绑定窗口";
-    private double _fontSize = 28;
     private double _opacityPercent = 90;
     private double _speed = 140;
     private DisplayArea _selectedArea;
@@ -48,12 +47,15 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         { ConfigurationNotice = configNotice };
         Story = new StoryLocatorViewModel(TextSource, Path.Combine(AppContext.BaseDirectory, "story-demo.json"));
         string databasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "danmaku.db");
-        _session = new LocalCommentSession(new SqliteCommentRepository(databasePath));
+        var repository = new SqliteCommentRepository(databasePath);
+        _session = new LocalCommentSession(repository);
         _overlay = new OverlayWindow(_session.Playback);
+        InitializeLikes(repository);
         var roots = new List<string> { Path.Combine(AppContext.BaseDirectory, "gamepacks") };
         string userPacks = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "gamepacks");
         if (Directory.Exists(userPacks)) roots.Add(userPacks);
         Pack = new GamePackViewModel(_session, TextSource, Story, roots: roots);
+        InitializeDemo();
         Pack.ActiveChanged += OnPackActiveChanged;
         TextSource.PropertyChanged += OnTextSourceChanged;
         Colors = [new("白色", "#FFFFFF"), new("金色", "#FFD166"), new("天蓝", "#80D8FF")];
@@ -66,11 +68,13 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _nodeClock.Start();
         Areas = [new("顶部 1/4", 0.25), new("上半屏", 0.5), new("全屏", 1)];
         _selectedArea = Areas[1];
+        UpdateSettings();
         RefreshCommand = new RelayCommand(Refresh);
         BindCommand = new RelayCommand(Bind, () => SelectedWindow is not null && !IsBound);
         UnbindCommand = new RelayCommand(Unbind, () => IsBound);
         ShowFloatingComposerCommand = new RelayCommand(RequestFloatingComposer);
         _tracker.Changed += OnWindowChanged;
+        _tracker.LayerUpdated += OnWindowLayerUpdated;
         Refresh();
     }
 
@@ -96,6 +100,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         NodeBindingState.Loading => "正在加载当前节点的弹幕…",
         NodeBindingState.Active when IsTargetVisible => "已确认当前节点，弹幕播放中。",
         NodeBindingState.Active when !IsBound => "已确认当前节点。尚未绑定目标窗口，绑定后才会显示弹幕。",
+        NodeBindingState.Active when _lastSnapshot?.State == TargetState.NotForeground => "已确认当前节点。弹幕已暂停并保留当前画面，切回目标窗口继续播放。",
         NodeBindingState.Active => "已确认当前节点。目标窗口回到前台后播放弹幕。",
         NodeBindingState.Failed => $"节点弹幕加载失败：{coordinator.LastError} 通常是本地数据库被占用或不可写；处理后点击“重播 / 重试当前节点”。",
         _ when !TextSource.IsRunning => "等待剧情定位确认节点。文本源未运行，请在“实时文本接收”中点击“开始接收”。",
@@ -103,7 +108,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     };
     public int SavedCount => _session.Playback.SavedCount;
     // The coordinator marks playback as running once a node loads, but the clock only advances while the
-    // overlay renders, i.e. while the target is visible. Report what actually happens.
+    // overlay renders, i.e. while the target is in the foreground. Report what actually happens.
     private bool IsTargetVisible => _lastSnapshot?.State == TargetState.Visible;
     public string NodeTime => $"节点时间 {_session.Playback.OffsetMilliseconds / 1000.0:0.0} 秒 · {(IsTargetVisible && _session.Playback.IsPlaying ? "播放中" : "已暂停")}";
     public string LocalStatus { get => _localStatus; private set => SetProperty(ref _localStatus, value); }
@@ -153,18 +158,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public string BoundTarget { get => _boundTarget; private set => SetProperty(ref _boundTarget, value); }
 
-    public double FontSize
-    {
-        get => _fontSize;
-        set
-        {
-            if (SetProperty(ref _fontSize, value))
-            {
-                UpdateSettings();
-            }
-        }
-    }
-
     public double OpacityPercent
     {
         get => _opacityPercent;
@@ -213,9 +206,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _nodeClock.Tick -= OnNodeClockTick;
         // Stop polling the target first so nothing repositions or unbinds while the rest is torn down.
         _tracker.Changed -= OnWindowChanged;
+        _tracker.LayerUpdated -= OnWindowLayerUpdated;
         _tracker.Dispose();
         _overlay.Suspend();
+        await DisposeLikesAsync();
         Pack.ActiveChanged -= OnPackActiveChanged;
+        Story.PropertyChanged -= OnDemoStoryChanged;
         TextSource.PropertyChanged -= OnTextSourceChanged;
         // Cancels and awaits any in-flight pack load and disposes the coordinator before the session goes away.
         await Pack.DisposeAsync();
@@ -249,10 +245,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     // Coordinator/pack changes: the overlay is cleared whenever the bound node changes or disappears,
-    // and only plays while a node is actually active (and the target window is visible).
+    // and only plays while a node is actually active (and the target window is in the foreground).
     private void OnPackActiveChanged(object? sender, EventArgs args)
     {
         if (_disposed) return;
+        StartDemoCommand.NotifyCanExecuteChanged();
         _overlay.ResetVisuals();
         _overlay.PlaybackEnabled = Pack.Coordinator is { State: NodeBindingState.Active };
         LocalStatus = Pack.Coordinator switch
@@ -272,6 +269,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private void OnTextSourceChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (!_disposed && args.PropertyName == nameof(TextSourceViewModel.IsRunning)) OnPropertyChanged(nameof(CoordinatorText));
+        if (!_disposed && args.PropertyName == nameof(TextSourceViewModel.SelectedSource)) StartDemoCommand.NotifyCanExecuteChanged();
+        if (!_disposed && args.PropertyName == nameof(TextSourceViewModel.CanEdit)) StartTextReceptionCommand.NotifyCanExecuteChanged();
     }
 
     private void UpdateLocalState()
@@ -302,7 +301,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         LocalStatus = "正在保存弹幕…";
         try
         {
-            StoredDanmaku saved = await coordinator.SendAsync(draft, SelectedColor.Value, FontSize);
+            StoredDanmaku saved = await coordinator.SendAsync(draft, SelectedColor.Value, DanmakuSettings.DefaultFontSize);
             if (_disposed) return;
             if (DraftText == draft) DraftText = "";
             LocalStatus = $"已保存到节点 {saved.NodeId} · {saved.OffsetMilliseconds / 1000.0:0.0} 秒。切回目标窗口播放。";
@@ -413,7 +412,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         // line, and Luna will not resend it, so resetting here would leave the node unknown until the next line.
         if (snapshot.State == TargetState.Closed) Story.Reset();
 
-        if (snapshot.State != TargetState.Visible)
+        if (snapshot.State is not (TargetState.Visible or TargetState.NotForeground))
         {
             _overlay.Suspend();
             return;
@@ -421,7 +420,21 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         try
         {
-            _overlay.Follow(snapshot.Bounds);
+            _overlay.Follow(snapshot.Bounds, snapshot.Target!, snapshot.State == TargetState.Visible);
+        }
+        catch (Win32Exception exception)
+        {
+            Unbind();
+            Status = $"覆盖层已停止：{exception.Message}";
+        }
+    }
+
+    private void OnWindowLayerUpdated(object? sender, WindowSnapshot snapshot)
+    {
+        if (_disposed || snapshot.Target is not { } target) return;
+        try
+        {
+            _overlay.SyncZOrder(target);
         }
         catch (Win32Exception exception)
         {
@@ -442,7 +455,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 { State: NodeBindingState.Failed } => "已绑定 · 节点弹幕加载失败，可点击“重播 / 重试当前节点”。",
                 _ => "已绑定，目标在前台。尚未确认剧情节点，弹幕已暂停。",
             },
-            TargetState.NotForeground => "已绑定。切回目标窗口后自动播放。",
+            TargetState.NotForeground => "已绑定。弹幕已暂停并保留当前画面，切回目标窗口继续播放。",
             TargetState.Minimized => "目标已最小化，覆盖层已隐藏。",
             TargetState.Hidden => "目标当前不可见，覆盖层已隐藏。",
             TargetState.Unavailable => "暂时无法读取客户区，等待窗口恢复。",
@@ -455,7 +468,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         return text;
     }
 
-    private void UpdateSettings() => _overlay.Settings = new DanmakuSettings(FontSize, OpacityPercent / 100, Speed, SelectedArea.Fraction);
+    private void UpdateSettings() => _overlay.Settings = new DanmakuSettings(opacity: OpacityPercent / 100, speed: Speed,
+        areaFraction: SelectedArea.Fraction, aggregationEnabled: IsAggregationEnabled);
 }
 
 public sealed record DisplayArea(string Label, double Fraction);

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         Title="GalDanmaku 游戏旁发送条" AutomationProperties.AutomationId="FloatingComposerWindow" WindowStyle="None" ResizeMode="NoResize"
-        Width="680" Height="60" ShowInTaskbar="False" ShowActivated="False" Topmost="True"
+        Width="680" Height="60" ShowInTaskbar="False" ShowActivated="False"
         Background="#20242B" Foreground="#F3F5F8">
   <Border BorderBrush="#426474" BorderThickness="1" CornerRadius="8" Padding="8">
     <Grid>
@@ -42,16 +42,17 @@
           <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
               <TextBlock Text="新发送弹幕" FontWeight="SemiBold" Foreground="#80D8FF" Margin="0,0,0,8" />
-              <TextBlock Text="{Binding FontSize, StringFormat=字号 · {0:0} DIP}" />
-              <Slider AutomationProperties.AutomationId="FloatingFontSizeSlider" Minimum="12" Maximum="64" Value="{Binding FontSize}" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,6,0,10" AutomationProperties.Name="浮条字号" />
+              <TextBlock Text="颜色" Margin="0,0,0,6" />
               <ComboBox AutomationProperties.AutomationId="FloatingCommentColorComboBox" ItemsSource="{Binding Colors}" SelectedItem="{Binding SelectedColor}" DisplayMemberPath="Label" AutomationProperties.Name="浮条颜色" />
               <TextBlock Text="播放显示" FontWeight="SemiBold" Foreground="#80D8FF" Margin="0,16,0,8" />
+              <CheckBox Content="聚合重复弹幕" IsChecked="{Binding IsAggregationEnabled}" AutomationProperties.AutomationId="FloatingAggregationCheckBox" Margin="0,0,0,4" />
+              <TextBlock Text="切换会重播当前节点" FontSize="11" Foreground="#AEB8C5" Margin="0,0,0,10" />
               <TextBlock Text="{Binding OpacityPercent, StringFormat=不透明度 · {0:0}%}" />
               <Slider AutomationProperties.AutomationId="FloatingOpacitySlider" Minimum="10" Maximum="100" Value="{Binding OpacityPercent}" TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,6,0,10" AutomationProperties.Name="浮条不透明度" />
               <TextBlock Text="{Binding Speed, StringFormat=速度 · {0:0} DIP/s}" />
               <Slider AutomationProperties.AutomationId="FloatingSpeedSlider" Minimum="40" Maximum="400" Value="{Binding Speed}" TickFrequency="10" IsSnapToTickEnabled="True" Margin="0,6,0,10" AutomationProperties.Name="浮条速度" />
               <ComboBox AutomationProperties.AutomationId="FloatingDisplayAreaComboBox" ItemsSource="{Binding Areas}" SelectedItem="{Binding SelectedArea}" DisplayMemberPath="Label" AutomationProperties.Name="浮条显示区域" />
-              <TextBlock Text="仅影响播放显示；已保存弹幕保留字号与颜色。" TextWrapping="Wrap" Margin="0,12,0,0" FontSize="11" Foreground="#AEB8C5" />
+              <TextBlock Text="字号由系统统一分配，聚合弹幕随数量增大；已保存弹幕保留原颜色。" TextWrapping="Wrap" Margin="0,12,0,0" FontSize="11" Foreground="#AEB8C5" />
             </StackPanel>
           </ScrollViewer>
         </Border>

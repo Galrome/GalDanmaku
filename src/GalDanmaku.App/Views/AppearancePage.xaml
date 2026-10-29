@@ -6,17 +6,16 @@
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,0"><StackPanel>
       <Border Style="{StaticResource ConsoleCard}" Margin="0,0,0,16"><StackPanel>
         <TextBlock Text="新发送弹幕" Style="{StaticResource ConsoleSectionTitle}" />
-        <TextBlock Text="字号与颜色仅应用于新发送的弹幕；已保存弹幕保留原样式。" Style="{StaticResource ConsoleCaption}" Margin="0,0,0,16" />
-        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="88" /><ColumnDefinition Width="*" /><ColumnDefinition Width="88" /></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="48" /><RowDefinition Height="48" /></Grid.RowDefinitions>
-          <TextBlock Text="字号" VerticalAlignment="Center" />
-          <Slider Grid.Column="1" AutomationProperties.AutomationId="FontSizeSlider" AutomationProperties.Name="字号" Minimum="12" Maximum="64" Value="{Binding FontSize}" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" />
-          <TextBlock Grid.Column="2" Text="{Binding FontSize, StringFormat={}{0:0} DIP}" HorizontalAlignment="Right" VerticalAlignment="Center" />
-          <TextBlock Grid.Row="1" Text="颜色" VerticalAlignment="Center" />
-          <ComboBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" AutomationProperties.AutomationId="CommentColorComboBox" AutomationProperties.Name="弹幕颜色" ItemsSource="{Binding Colors}" SelectedItem="{Binding SelectedColor}" DisplayMemberPath="Label" IsEnabled="{Binding IsLocalIdle}" Width="160" HorizontalAlignment="Left" VerticalAlignment="Center" />
+        <TextBlock Text="颜色应用于新发送的弹幕；字号由系统统一分配，聚合弹幕随数量增大。" Style="{StaticResource ConsoleCaption}" Margin="0,0,0,16" />
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="88" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="48" /></Grid.RowDefinitions>
+          <TextBlock Text="颜色" VerticalAlignment="Center" />
+          <ComboBox Grid.Column="1" AutomationProperties.AutomationId="CommentColorComboBox" AutomationProperties.Name="弹幕颜色" ItemsSource="{Binding Colors}" SelectedItem="{Binding SelectedColor}" DisplayMemberPath="Label" IsEnabled="{Binding IsLocalIdle}" Width="160" HorizontalAlignment="Left" VerticalAlignment="Center" />
         </Grid>
       </StackPanel></Border>
       <Border Style="{StaticResource ConsoleCard}"><StackPanel>
         <TextBlock Text="播放显示" Style="{StaticResource ConsoleSectionTitle}" />
+        <CheckBox Content="聚合重复弹幕" IsChecked="{Binding IsAggregationEnabled}" AutomationProperties.AutomationId="AggregationCheckBox" Margin="0,0,0,6" />
+        <TextBlock Text="切换会重播当前节点" Style="{StaticResource ConsoleCaption}" Margin="0,0,0,10" />
         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="88" /><ColumnDefinition Width="*" /><ColumnDefinition Width="88" /></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="52" /><RowDefinition Height="52" /><RowDefinition Height="52" /></Grid.RowDefinitions>
           <TextBlock Text="不透明度" VerticalAlignment="Center" />
           <Slider Grid.Column="1" AutomationProperties.AutomationId="OpacitySlider" AutomationProperties.Name="不透明度" Minimum="10" Maximum="100" Value="{Binding OpacityPercent}" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" />

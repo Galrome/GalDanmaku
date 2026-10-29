@@ -3,7 +3,7 @@ using Microsoft.Data.Sqlite;
 
 namespace GalDanmaku.Storage;
 
-public sealed class SqliteCommentRepository : ICommentRepository
+public sealed class SqliteCommentRepository : ICommentRepository, ILocalLikeRepository
 {
     private readonly string _databasePath;
     private readonly string _connectionString;
@@ -89,6 +89,74 @@ public sealed class SqliteCommentRepository : ICommentRepository
         }, cancellationToken);
     }
 
+    public Task<bool> GetLocalLikedAsync(string gameId, string nodeId, Guid commentId, CancellationToken cancellationToken = default)
+    {
+        ValidateLocalLikeIdentity(gameId, nodeId, commentId);
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
+            using var connection = new SqliteConnection(_connectionString);
+            connection.Open();
+            InitializeSchema(connection, cancellationToken);
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "SELECT local_liked FROM danmaku WHERE id=$id AND game_id=$game AND node_id=$node";
+            AddLocalLikeIdentity(command, gameId, nodeId, commentId);
+            object? result = command.ExecuteScalar();
+            cancellationToken.ThrowIfCancellationRequested();
+            return result is long value ? value == 1 : throw MissingLocalLikeComment();
+        }, cancellationToken);
+    }
+
+    public Task SetLocalLikedAsync(string gameId, string nodeId, Guid commentId, bool liked, CancellationToken cancellationToken = default)
+    {
+        ValidateLocalLikeIdentity(gameId, nodeId, commentId);
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
+            using var connection = new SqliteConnection(_connectionString);
+            connection.Open();
+            InitializeSchema(connection, cancellationToken);
+            using SqliteTransaction transaction = connection.BeginTransaction();
+            using SqliteCommand command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE danmaku SET local_liked=$liked WHERE id=$id AND game_id=$game AND node_id=$node";
+            AddLocalLikeIdentity(command, gameId, nodeId, commentId);
+            command.Parameters.AddWithValue("$liked", liked ? 1 : 0);
+            cancellationToken.ThrowIfCancellationRequested();
+            int affectedRows = command.ExecuteNonQuery();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (affectedRows != 1)
+            {
+                throw MissingLocalLikeComment();
+            }
+
+            // Once commit succeeds, report success even if cancellation arrives at that boundary.
+            transaction.Commit();
+        }, cancellationToken);
+    }
+
+    private static void ValidateLocalLikeIdentity(string gameId, string nodeId, Guid commentId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(gameId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
+        if (commentId == Guid.Empty)
+        {
+            throw new ArgumentException("弹幕 ID 不能为空。", nameof(commentId));
+        }
+    }
+
+    private static void AddLocalLikeIdentity(SqliteCommand command, string gameId, string nodeId, Guid commentId)
+    {
+        command.Parameters.AddWithValue("$id", commentId.ToString("D"));
+        command.Parameters.AddWithValue("$game", gameId);
+        command.Parameters.AddWithValue("$node", nodeId);
+    }
+
+    private static InvalidOperationException MissingLocalLikeComment() =>
+        new("当前游戏与节点中不存在这条原始弹幕，无法读取或设置本地点赞。");
+
     private static void InitializeSchema(SqliteConnection connection, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -97,9 +165,9 @@ public sealed class SqliteCommentRepository : ICommentRepository
         command.Transaction = transaction;
         command.CommandText = "PRAGMA user_version";
         long version = (long)command.ExecuteScalar()!;
-        if (version is not (0 or 1))
+        if (version is not (0 or 1 or 2))
         {
-            throw new NotSupportedException($"数据库版本 {version} 不受支持；本程序支持版本 1。原数据库未修改。");
+            throw new NotSupportedException($"数据库版本 {version} 不受支持；本程序支持版本 2。原数据库未修改。");
         }
 
         if (version == 0)
@@ -118,6 +186,15 @@ public sealed class SqliteCommentRepository : ICommentRepository
                 );
                 CREATE INDEX ix_danmaku_game_node_offset ON danmaku(game_id, node_id, offset_ms, created_utc_ticks, id);
                 PRAGMA user_version = 1;
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        if (version < 2)
+        {
+            command.CommandText = """
+                ALTER TABLE danmaku ADD COLUMN local_liked INTEGER NOT NULL DEFAULT 0 CHECK(local_liked IN (0, 1));
+                PRAGMA user_version = 2;
                 """;
             command.ExecuteNonQuery();
         }

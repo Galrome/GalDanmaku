@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -12,12 +13,25 @@ public sealed class OverlayWindow : Window
 {
     private readonly OverlayRenderer _renderer;
     private bool _playbackEnabled;
+    private bool _targetForeground;
     private HwndSource? _source;
     private nint _handle;
+    private readonly HoverActionWindow _actions;
+    private WindowTarget? _target;
+    private long? _outsideSince;
+    private double _actionAnchorOffset;
+
+    public event EventHandler? HoveredCommentChanged;
+    public event EventHandler? LikeRequested;
+    public StoredDanmaku? HoveredComment => _renderer.HoveredComment;
 
     public OverlayWindow(NodePlayback playback)
     {
         _renderer = new OverlayRenderer(playback);
+        _actions = new HoverActionWindow();
+        _renderer.FrameAdvanced += OnFrameAdvanced;
+        _renderer.HoveredCommentChanged += OnHoveredCommentChanged;
+        _actions.ActionRequested += OnLikeRequested;
         Title = "GalDanmaku Overlay";
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
@@ -26,7 +40,6 @@ public sealed class OverlayWindow : Window
         ShowActivated = false;
         ShowInTaskbar = false;
         Focusable = false;
-        Topmost = true;
         Width = 1;
         Height = 1;
         Content = _renderer;
@@ -44,21 +57,17 @@ public sealed class OverlayWindow : Window
         set
         {
             _playbackEnabled = value;
-            if (value && IsVisible)
-            {
-                _renderer.Start();
-            }
-            else
-            {
-                _renderer.Stop();
-            }
+            ApplyPlaybackState();
         }
     }
 
     public void ResetVisuals() => _renderer.ResetVisuals();
 
-    public void Follow(ClientBounds bounds)
+    public void Follow(ClientBounds bounds, WindowTarget target, bool isForeground = true)
     {
+        if (_target != target) _renderer.ClearHover();
+        _target = target;
+        _targetForeground = isForeground;
         _handle = new WindowInteropHelper(this).EnsureHandle();
         Position(bounds);
         if (!IsVisible)
@@ -67,17 +76,106 @@ public sealed class OverlayWindow : Window
             // WPF can reapply its cached location during Show; native pixels remain authoritative.
             Position(bounds);
         }
+        // WPF rejects an Owner whose HWND has not been created yet.
+        if (_actions.Owner is null) _actions.Owner = this;
 
-        if (PlaybackEnabled)
-        {
-            _renderer.Start();
-        }
+        SyncZOrder(target);
+    }
+
+    private void ApplyPlaybackState()
+    {
+        if (_playbackEnabled && _targetForeground && IsVisible && TargetStillForeground()) _renderer.Start();
+        else _renderer.Stop();
+    }
+
+    public void SyncZOrder(WindowTarget target)
+    {
+        // Changed handlers can unbind before the poll's LayerUpdated notification arrives.
+        if (!IsVisible || _target != target) return;
+        if (!NativeMethods.IsWindow(target.Handle) ||
+            NativeMethods.GetWindowThreadProcessId(target.Handle, out uint processId) != target.ThreadId || processId != target.ProcessId)
+            throw new Win32Exception("目标窗口已关闭，无法同步覆盖层层级。");
+        WindowLayer.PlaceAboveTarget(_handle, target.Handle);
+        // A setter may have stopped playback during a foreground change shorter than one tracker poll.
+        // Recheck on every valid poll, including those that keep the same snapshot.
+        ApplyPlaybackState();
     }
 
     public void Suspend()
     {
+        _targetForeground = false;
         _renderer.Stop();
         Hide();
+    }
+
+    public void UpdateLikeState(bool? liked, bool busy, string? error) => _actions.UpdateState(liked, busy, error);
+
+    private void OnLikeRequested(object? sender, EventArgs args)
+    {
+        if (TargetStillForeground() && HoveredComment is not null) LikeRequested?.Invoke(this, EventArgs.Empty);
+        else _renderer.ClearHover();
+    }
+
+    private bool TargetStillForeground() => _target is { } target &&
+        NativeMethods.GetForegroundWindow() == target.Handle && NativeMethods.IsWindowVisible(target.Handle) &&
+        !NativeMethods.IsIconic(target.Handle) && !NativeMethods.IsCloaked(target.Handle) &&
+        NativeMethods.GetWindowThreadProcessId(target.Handle, out uint processId) == target.ThreadId && processId == target.ProcessId;
+
+    private void OnFrameAdvanced(object? sender, EventArgs args)
+    {
+        if (!IsVisible || !TargetStillForeground() || !NativeMethods.GetCursorPos(out NativeMethods.NativePoint cursor))
+        {
+            _renderer.ClearHover();
+            return;
+        }
+        var screenPoint = new Point(cursor.X, cursor.Y);
+        if (HoveredComment is null)
+        {
+            _renderer.HoverAt(_renderer.PointFromScreen(screenPoint));
+            return;
+        }
+
+        try
+        {
+            Rect textBounds = ScreenBounds(_renderer.HoveredBounds);
+            _actions.Place(textBounds, ScreenBounds(new Rect(_renderer.RenderSize)), textBounds.Left + _actionAnchorOffset);
+            Rect keepText = textBounds;
+            Rect keepActions = _actions.ScreenBounds;
+            // A few physical pixels bridge rounded corners and fractional DIP rounding.
+            keepText.Inflate(4, 4);
+            keepActions.Inflate(4, 4);
+            bool retained = keepText.Contains(screenPoint) || keepActions.Contains(screenPoint) || _actions.HasPointerCapture;
+            if (retained) _outsideSince = null;
+            else
+            {
+                _outsideSince ??= Stopwatch.GetTimestamp();
+                if (Stopwatch.GetElapsedTime(_outsideSince.Value).TotalMilliseconds >= 100) _renderer.ClearHover();
+            }
+        }
+        catch (Win32Exception)
+        {
+            // A failed action window must never leave a stationary item or an invisible input surface.
+            _renderer.ClearHover();
+        }
+    }
+
+    private Rect ScreenBounds(Rect bounds) => bounds.IsEmpty ? Rect.Empty :
+        new Rect(_renderer.PointToScreen(bounds.TopLeft), _renderer.PointToScreen(bounds.BottomRight));
+
+    private void OnHoveredCommentChanged(object? sender, EventArgs args)
+    {
+        _outsideSince = null;
+        if (HoveredComment is null) _actions.Suspend();
+        else
+        {
+            _actions.UpdateState(null, busy: true, error: null);
+            Rect textBounds = ScreenBounds(_renderer.HoveredBounds);
+            _actionAnchorOffset = NativeMethods.GetCursorPos(out NativeMethods.NativePoint cursor)
+                ? Math.Clamp(cursor.X - textBounds.Left, 0, textBounds.Width) : textBounds.Width / 2;
+            try { _actions.Place(textBounds, ScreenBounds(new Rect(_renderer.RenderSize)), textBounds.Left + _actionAnchorOffset); }
+            catch (Win32Exception) { _renderer.ClearHover(); return; }
+        }
+        HoveredCommentChanged?.Invoke(this, EventArgs.Empty);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -102,15 +200,25 @@ public sealed class OverlayWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _renderer.Dispose();
+        _renderer.FrameAdvanced -= OnFrameAdvanced;
+        _renderer.HoveredCommentChanged -= OnHoveredCommentChanged;
+        _actions.ActionRequested -= OnLikeRequested;
+        _actions.Shutdown();
         _source?.RemoveHook(WindowProcedure);
         _source = null;
         base.OnClosed(e);
     }
 
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        _renderer.ClearHover();
+        base.OnDpiChanged(oldDpi, newDpi);
+    }
+
     private void Position(ClientBounds bounds)
     {
-        if (!NativeMethods.SetWindowPos(_handle, new nint(-1), bounds.X, bounds.Y, bounds.Width, bounds.Height,
-            NativeMethods.NoActivatePosition | NativeMethods.NoOwnerZOrderPosition))
+        if (!NativeMethods.SetWindowPos(_handle, nint.Zero, bounds.X, bounds.Y, bounds.Width, bounds.Height,
+            NativeMethods.NoActivatePosition | NativeMethods.NoOwnerZOrderPosition | NativeMethods.NoZOrderPosition))
         {
             throw new Win32Exception(Marshal.GetLastWin32Error(), "无法定位覆盖层。");
         }

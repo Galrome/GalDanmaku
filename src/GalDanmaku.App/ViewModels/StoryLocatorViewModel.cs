@@ -69,6 +69,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
     // Manual JSON import is a locate-only debugging aid and is unavailable while a game pack provides the index.
     public bool CanImport => CanLoad && !_packActive;
     public bool CanInput => CanLoad && !IsLiveMode && _locator is not null;
+    public bool HasDemoFrames => DemoFrames().Count > 0;
     public bool CanDemo => CanInput && DemoFrames().Count > _demoPosition;
     public string IndexPath { get => _indexPath; set { if (CanLoad) SetProperty(ref _indexPath, value); } }
     public string IndexStatus { get => _indexStatus; private set => SetProperty(ref _indexStatus, value); }
@@ -263,7 +264,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
 
     private void NotifyState()
     {
-        foreach (string property in new[] { nameof(CanLoad), nameof(CanImport), nameof(CanInput), nameof(CanDemo), nameof(LocationStatus),
+        foreach (string property in new[] { nameof(CanLoad), nameof(CanImport), nameof(CanInput), nameof(HasDemoFrames), nameof(CanDemo), nameof(LocationStatus),
             nameof(CurrentNodeId), nameof(OffsetMilliseconds), nameof(HistoryCount), nameof(StatusText), nameof(Reason),
             nameof(NodeText), nameof(CandidateText), nameof(OffsetText), nameof(DemoProgress) }) OnPropertyChanged(property);
         LoadCommand.NotifyCanExecuteChanged();

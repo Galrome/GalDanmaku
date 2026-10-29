@@ -55,6 +55,17 @@ public sealed class DanmakuEngineTests
     }
 
     [Fact]
+    public void ResizeKeepsCommentsAndFontChangeClearsDefaultGeometry()
+    {
+        var engine = CreateEngine();
+        engine.TryAdd("Hello", 100);
+        engine.Configure(new DanmakuSettings(), 400, 600);
+        Assert.Single(engine.Items);
+        engine.Configure(new DanmakuSettings(fontSize: 40), 400, 600);
+        Assert.Empty(engine.Items);
+    }
+
+    [Fact]
     public void CapacityBoundsMemoryEvenWithVeryLargeViewport()
     {
         var engine = CreateEngine(height: 100_000);

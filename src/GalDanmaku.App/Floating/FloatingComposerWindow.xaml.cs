@@ -131,6 +131,7 @@ public partial class FloatingComposerWindow : Window
                 Show();
                 if (!_dragging) Position(snapshot!);
             }
+            if (targetForeground) WindowLayer.PlaceAboveTarget(_handle, snapshot!.Target!.Handle);
             if (targetForeground) FeedbackLabel.Visibility = Visibility.Collapsed;
             PausedLabel.Visibility = targetForeground || FeedbackLabel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
         }
@@ -162,8 +163,9 @@ public partial class FloatingComposerWindow : Window
         ClientBounds bounds = snapshot.Bounds;
         ComposerRectangle placement = ComposerPolicy.Place(new(bounds.X, bounds.Y, bounds.Width, bounds.Height),
             new(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top), width, height, 8 * scale, _offset);
-        if (!NativeMethods.SetWindowPos(_handle, new nint(-1), (int)placement.X, (int)placement.Y,
-            (int)placement.Width, (int)placement.Height, NativeMethods.NoActivatePosition | NativeMethods.NoOwnerZOrderPosition))
+        if (!NativeMethods.SetWindowPos(_handle, nint.Zero, (int)placement.X, (int)placement.Y,
+            (int)placement.Width, (int)placement.Height,
+            NativeMethods.NoActivatePosition | NativeMethods.NoOwnerZOrderPosition | NativeMethods.NoZOrderPosition))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "无法定位发送条。");
         PopupSurface.Width = Math.Max(1, Math.Min(320, availableWidth - 12));
         PopupSurface.MaxHeight = Math.Max(1, (work.Bottom - work.Top) / scale - 12);

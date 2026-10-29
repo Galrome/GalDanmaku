@@ -25,6 +25,7 @@ public partial class MainWindow : FluentWindow
         InitializeComponent();
         _viewModel = new MainViewModel();
         DataContext = _viewModel;
+        _viewModel.DemoStarted += (_, _) => OverviewNavigation.IsChecked = true;
         _composer = new FloatingComposerWindow(_viewModel, ShowBackground);
         var overview = new OverviewPage();
         overview.ConnectionRequested += (_, _) => ConnectionNavigation.IsChecked = true;

@@ -1,12 +1,26 @@
-<UserControl x:Class="GalDanmaku.App.Views.TextSourcePanel" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
+<UserControl x:Class="GalDanmaku.App.Views.TextSourcePanel" x:Name="Root" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
   <UserControl.Resources><ResourceDictionary Source="../Styles/ConsoleStyles.xaml" /></UserControl.Resources>
   <Border Style="{StaticResource ConsoleCard}"><StackPanel>
     <TextBlock Text="实时文本接收" Style="{StaticResource ConsoleSectionTitle}" />
-    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
       <ComboBox AutomationProperties.AutomationId="TextSourceSelector" AutomationProperties.Name="文本来源" ItemsSource="{Binding Sources}" SelectedItem="{Binding SelectedSource}" DisplayMemberPath="Label" IsEnabled="{Binding CanEdit}" Margin="0,0,8,0" />
-      <ui:Button Grid.Column="1" AutomationProperties.AutomationId="StartTextSourceButton" Content="开始接收" Appearance="Primary" Command="{Binding StartCommand}" Margin="0,0,8,0" />
-      <ui:Button Grid.Column="2" AutomationProperties.AutomationId="StopTextSourceButton" Content="停止" Command="{Binding StopCommand}" />
+      <ui:Button Grid.Column="1" AutomationProperties.AutomationId="StartStoryDemoButton" Content="逐句演示" Appearance="Primary" Command="{Binding DemoCommand, ElementName=Root}" Margin="0,0,8,0">
+        <ui:Button.Style><Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding SelectedSource.IsMock}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></ui:Button.Style>
+      </ui:Button>
+      <ui:Button Grid.Column="2" AutomationProperties.AutomationId="StartTextSourceButton" Command="{Binding StartReceptionCommand, ElementName=Root}" Margin="0,0,8,0">
+        <ui:Button.Style><Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}"><Setter Property="Appearance" Value="Primary" /><Style.Triggers><DataTrigger Binding="{Binding SelectedSource.IsMock}" Value="True"><Setter Property="Appearance" Value="Secondary" /></DataTrigger></Style.Triggers></Style></ui:Button.Style>
+        <TextBlock><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Text" Value="开始接收" /><Style.Triggers><DataTrigger Binding="{Binding SelectedSource.IsMock}" Value="True"><Setter Property="Text" Value="快速文本测试" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+      </ui:Button>
+      <ui:Button Grid.Column="3" AutomationProperties.AutomationId="StopTextSourceButton" Content="停止" Command="{Binding StopCommand}" />
     </Grid>
+    <StackPanel>
+      <StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding SelectedSource.IsMock}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></StackPanel.Style>
+      <TextBlock Text="逐句演示会打开概览，不会自动换句；点击「下一句」才推进。" Style="{StaticResource ConsoleCaption}" Margin="0,10,0,0" />
+      <TextBlock Text="当前游戏包没有内置演示场景，逐句演示不可用。" Margin="0,6,0,0">
+        <TextBlock.Style><Style TargetType="TextBlock" BasedOn="{StaticResource ConsoleCaption}"><Style.Triggers><DataTrigger Binding="{Binding HasDemoFrames, ElementName=Root}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+      </TextBlock>
+      <TextBlock Text="快速文本测试会连续换句，结束后清空当前节点；仅用于文本接收测试。" Style="{StaticResource ConsoleCaption}" Margin="0,6,0,0" />
+    </StackPanel>
     <StackPanel>
       <StackPanel.Style><Style TargetType="StackPanel"><Style.Triggers><DataTrigger Binding="{Binding SelectedSource.IsMock}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></StackPanel.Style>
       <TextBlock Text="LunaTranslator 原文 WebSocket 地址" Style="{StaticResource ConsoleCaption}" Margin="0,12,0,6" />

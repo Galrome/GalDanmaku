@@ -11,9 +11,15 @@ internal static class NativeMethods
     internal const long NoActivateStyle = 0x08000000;
     internal const long ToolWindowStyle = 0x00000080;
     internal const long AppWindowStyle = 0x00040000;
+    internal const long TopmostStyle = 0x00000008;
+    internal const uint NoSizePosition = 0x0001;
+    internal const uint NoMovePosition = 0x0002;
+    internal const uint NoZOrderPosition = 0x0004;
     internal const uint NoActivatePosition = 0x0010;
     internal const uint NoOwnerZOrderPosition = 0x0200;
     internal const int CloakedAttribute = 14;
+    internal const uint PreviousWindow = 3;
+    internal const uint OwnerWindow = 4;
 
     internal delegate bool EnumWindowsCallback(nint window, nint parameter);
 
@@ -43,6 +49,13 @@ internal static class NativeMethods
     internal static extern nint GetForegroundWindow();
 
     [DllImport("user32.dll")]
+    internal static extern nint GetWindow(nint window, uint command);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetCursorPos(out NativePoint point);
+
+    [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool SetForegroundWindow(nint window);
 
@@ -51,6 +64,9 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     internal static extern nint MonitorFromWindow(nint window, uint flags);
+
+    [DllImport("user32.dll")]
+    internal static extern nint MonitorFromPoint(NativePoint point, uint flags);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

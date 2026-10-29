@@ -38,7 +38,7 @@ public sealed class SqliteCommentRepositoryTests : IDisposable
         using SqliteConnection connection = Open();
         using SqliteCommand command = connection.CreateCommand();
         command.CommandText = "PRAGMA user_version";
-        Assert.Equal(1L, command.ExecuteScalar());
+        Assert.Equal(2L, command.ExecuteScalar());
         command.CommandText = "SELECT COUNT(*) FROM pragma_index_info('ix_danmaku_game_node_offset') WHERE name IN ('game_id', 'node_id', 'offset_ms')";
         Assert.Equal(3L, command.ExecuteScalar());
     }
@@ -49,7 +49,7 @@ public sealed class SqliteCommentRepositoryTests : IDisposable
         using (SqliteConnection connection = Open())
         using (SqliteCommand command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA user_version=2; CREATE TABLE future_data(value TEXT); INSERT INTO future_data VALUES('keep me')";
+            command.CommandText = "PRAGMA user_version=3; CREATE TABLE future_data(value TEXT); INSERT INTO future_data VALUES('keep me')";
             command.ExecuteNonQuery();
         }
 
@@ -59,7 +59,7 @@ public sealed class SqliteCommentRepositoryTests : IDisposable
         using SqliteConnection verify = Open();
         using SqliteCommand query = verify.CreateCommand();
         query.CommandText = "PRAGMA user_version";
-        Assert.Equal(2L, query.ExecuteScalar());
+        Assert.Equal(3L, query.ExecuteScalar());
         query.CommandText = "SELECT value FROM future_data";
         Assert.Equal("keep me", query.ExecuteScalar());
         query.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE name='danmaku'";

@@ -1,0 +1,18 @@
+<Window x:Class="GalDanmaku.App.Overlay.HoverActionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="本地点赞" WindowStyle="None" ResizeMode="NoResize" Width="166" Height="38"
+        ShowInTaskbar="False" ShowActivated="False" Focusable="False"
+        AllowsTransparency="True" Background="Transparent" KeyboardNavigation.TabNavigation="None">
+    <Border Background="#252A33" BorderBrush="#426474" BorderThickness="1" CornerRadius="6" Padding="4">
+        <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <ui:Button x:Name="LikeButton" AutomationProperties.AutomationId="HoverLikeButton"
+                       Content="读取中…" IsEnabled="False" Focusable="False" IsTabStop="False"
+                       HorizontalAlignment="Stretch" VerticalAlignment="Stretch" HorizontalContentAlignment="Center"
+                       Padding="6,1" Margin="0,0,5,0" Click="OnLikeClick" FontSize="12" />
+            <TextBlock Grid.Column="1" Text="本地" Foreground="#AEB8C5" FontSize="10" VerticalAlignment="Center" />
+        </Grid>
+    </Border>
+</Window>

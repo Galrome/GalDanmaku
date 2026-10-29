@@ -19,6 +19,7 @@ public sealed class WindowTracker : IDisposable
     }
 
     public event EventHandler<WindowSnapshot>? Changed;
+    public event EventHandler<WindowSnapshot>? LayerUpdated;
 
     public void Bind(WindowTarget target)
     {
@@ -52,6 +53,7 @@ public sealed class WindowTracker : IDisposable
         _timer.Tick -= OnTick;
         _target = null;
         Changed = null;
+        LayerUpdated = null;
         _disposed = true;
     }
 
@@ -100,8 +102,11 @@ public sealed class WindowTracker : IDisposable
             return;
         }
 
-        Publish(new WindowSnapshot(target, state,
-            new ClientBounds(origin.X, origin.Y, end.X - origin.X, end.Y - origin.Y), foreground));
+        var snapshot = new WindowSnapshot(target, state,
+            new ClientBounds(origin.X, origin.Y, end.X - origin.X, end.Y - origin.Y), foreground);
+        Publish(snapshot);
+        // Z order can change without geometry or foreground changing. Keep Changed's equality semantics.
+        LayerUpdated?.Invoke(this, snapshot);
     }
 
     private void Publish(WindowSnapshot snapshot)
