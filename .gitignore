@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+TestResults/
+*.log
+/README.md
+/docs/
+/assets/
+/.claude/
+/data/
+/src/GalDanmaku.App/Properties/launchSettings.json

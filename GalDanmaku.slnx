@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GalDanmaku.App/GalDanmaku.App.csproj" />
+    <Project Path="src/GalDanmaku.Core/GalDanmaku.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GalDanmaku.Tests/GalDanmaku.Tests.csproj" />
+  </Folder>
+</Solution>
