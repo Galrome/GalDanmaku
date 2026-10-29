@@ -1,0 +1,10 @@
+{
+  "SchemaVersion": 1,
+  "GameId": "phase5-synthetic-b",
+  "Nodes": [
+    { "Id": "b:start", "Text": "海辺の駅に、電車が止まった。", "NextIds": ["b:left", "b:right"] },
+    { "Id": "b:left", "Text": "左の改札から、潮の匂いがした。", "NextIds": ["b:end"] },
+    { "Id": "b:right", "Text": "右の階段から、鐘の音が聞こえた。", "NextIds": ["b:end"] },
+    { "Id": "b:end", "Text": "最終電車は、もう行ってしまった。", "NextIds": [] }
+  ]
+}

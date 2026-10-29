@@ -1,0 +1,21 @@
+{
+  "SchemaVersion": 1,
+  "GameId": "phase5-synthetic-b",
+  "Name": "合成演示 B",
+  "Version": "1.0",
+  "Identification": { "ProcessNames": ["synthetic-b.exe"] },
+  "StoryIndex": "story.json",
+  "TextSource": {
+    "Kind": "Mock",
+    "MockScript": [
+      "",
+      "海",
+      "海辺の駅に、",
+      "海辺の駅に、電車が止まった。",
+      "右の階段から、",
+      "右の階段から、鐘の音が聞こえた。",
+      "右の階段から、鐘の音が聞こえた。",
+      "最終電車は、もう行ってしまった。"
+    ]
+  }
+}

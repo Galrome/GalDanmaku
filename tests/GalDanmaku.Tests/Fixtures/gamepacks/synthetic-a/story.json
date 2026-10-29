@@ -1,0 +1,17 @@
+{
+  "SchemaVersion": 1,
+  "GameId": "phase4-synthetic",
+  "Nodes": [
+    { "Id": "demo:a-intro", "Text": "朝の庭で、青い花を見つけた。", "NextIds": ["demo:a-repeat"] },
+    { "Id": "demo:a-repeat", "Text": "また会えたね。", "NextIds": ["demo:a-repeat2"] },
+    { "Id": "demo:a-repeat2", "Text": "少し歩こう。", "NextIds": ["demo:a-end"] },
+    { "Id": "demo:a-end", "Text": "青い花を窓辺に飾ろう。", "NextIds": ["demo:converge"] },
+    { "Id": "demo:b-intro", "Text": "夕方の坂で、赤い傘を拾った。", "NextIds": ["demo:b-repeat"] },
+    { "Id": "demo:b-repeat", "Text": "また会えたね。", "NextIds": ["demo:b-repeat2"] },
+    { "Id": "demo:b-repeat2", "Text": "少し歩こう。", "NextIds": ["demo:b-end"] },
+    { "Id": "demo:b-end", "Text": "赤い傘を玄関に置こう。", "NextIds": ["demo:converge"] },
+    { "Id": "demo:converge", "Text": "明日は、きっと晴れる。", "NextIds": [] },
+    { "Id": "demo:short", "Text": "風", "NextIds": [] },
+    { "Id": "demo:long", "Text": "風が静かに吹いている。", "NextIds": [] }
+  ]
+}

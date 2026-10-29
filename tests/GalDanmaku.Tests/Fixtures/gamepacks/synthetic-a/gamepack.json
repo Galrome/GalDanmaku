@@ -1,0 +1,24 @@
+{
+  "SchemaVersion": 1,
+  "GameId": "phase4-synthetic",
+  "Name": "合成演示 A",
+  "Version": "1.0",
+  "Engine": "Synthetic",
+  "Identification": { "ProcessNames": ["synthetic-a.exe"] },
+  "StoryIndex": "story.json",
+  "TextSource": {
+    "Kind": "Mock",
+    "MockScript": [
+      "",
+      "朝",
+      "朝の庭で、",
+      "朝の庭で、青い花を見つけた。",
+      "朝の庭で、青い花を見つけた。",
+      "また会えたね。",
+      "少し歩こう。",
+      "青い花を窓辺に飾ろう。",
+      "明日は、きっと晴れる。"
+    ]
+  },
+  "Normalization": { "RemoveStrings": ["　"] }
+}
