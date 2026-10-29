@@ -70,7 +70,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _selectedArea = Areas[1];
         UpdateSettings();
         RefreshCommand = new RelayCommand(Refresh);
-        BindCommand = new RelayCommand(Bind, () => SelectedWindow is not null && !IsBound);
+        BindCommand = new AsyncRelayCommand(BindAsync, () => SelectedWindow is not null && !IsBound && !_disposed);
         UnbindCommand = new RelayCommand(Unbind, () => IsBound);
         ShowFloatingComposerCommand = new RelayCommand(RequestFloatingComposer);
         _tracker.Changed += OnWindowChanged;
@@ -249,6 +249,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private void OnPackActiveChanged(object? sender, EventArgs args)
     {
         if (_disposed) return;
+        UpdateBoundTarget();
         StartDemoCommand.NotifyCanExecuteChanged();
         _overlay.ResetVisuals();
         _overlay.PlaybackEnabled = Pack.Coordinator is { State: NodeBindingState.Active };
@@ -354,7 +355,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         try
         {
-            nint? selectedHandle = SelectedWindow?.Handle;
+            WindowTarget? selected = SelectedWindow;
             IReadOnlyList<WindowTarget> windows = WindowCatalog.Enumerate();
             Windows.Clear();
             foreach (WindowTarget window in windows)
@@ -362,7 +363,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 Windows.Add(window);
             }
 
-            SelectedWindow = Windows.FirstOrDefault(window => window.Handle == selectedHandle);
+            SelectedWindow = Windows.FirstOrDefault(window => selected is not null && window.Handle == selected.Handle
+                && window.ProcessId == selected.ProcessId && window.ThreadId == selected.ThreadId);
             if (!IsBound)
             {
                 Status = Windows.Count == 0 ? "没有可选窗口。打开目标应用后刷新列表。" : "选择一个窗口，然后绑定。";
@@ -374,7 +376,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private void Bind()
+    private async Task BindAsync()
     {
         if (SelectedWindow is not { } target)
         {
@@ -383,7 +385,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         try
         {
+            target = WindowCatalog.ReadProcessIdentity(target);
+            Task matching = Pack.BindWindowAsync(target.ExecutablePath, target.ProcessIdentityError);
             _tracker.Bind(target);
+            await matching;
         }
         catch (InvalidOperationException exception)
         {
@@ -393,24 +398,32 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private void Unbind() => _tracker.Unbind();
+    private void Unbind()
+    {
+        _ = Pack.ClearWindowBindingAsync();
+        _tracker.Unbind();
+    }
+
+    private void UpdateBoundTarget()
+    {
+        BoundTarget = IsBound && _lastSnapshot?.Target is { } target
+            ? $"{target.ProcessName} · {target.Title} · {Pack.GameIdentity}" : "未绑定窗口";
+    }
 
     private void OnWindowChanged(object? sender, WindowSnapshot snapshot)
     {
         _lastSnapshot = snapshot;
         WindowSnapshotChanged?.Invoke(this, snapshot);
         IsBound = snapshot.State is not (TargetState.Unbound or TargetState.Closed);
-        BoundTarget = IsBound ? $"{snapshot.Target!.ProcessName} · {snapshot.Target.Title}" : "未绑定窗口";
+        UpdateBoundTarget();
         // A window that closed on its own must not stay selectable in the list.
         if (snapshot.State == TargetState.Closed) Refresh();
         Status = DescribeWindow(snapshot);
         OnPropertyChanged(nameof(CoordinatorText));
         OnPropertyChanged(nameof(NodeTime));
 
-        // A closed game window ends the story context: the old position must not carry over to the next run.
-        // A manual unbind keeps it: text reception is independent of the window, the game is still on the same
-        // line, and Luna will not resend it, so resetting here would leave the node unknown until the next line.
-        if (snapshot.State == TargetState.Closed) Story.Reset();
+        // A closed target revokes the entire game context, including pending pack loads.
+        if (snapshot.State == TargetState.Closed) _ = Pack.ClearWindowBindingAsync();
 
         if (snapshot.State is not (TargetState.Visible or TargetState.NotForeground))
         {

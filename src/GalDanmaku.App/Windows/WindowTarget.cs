@@ -1,6 +1,7 @@
 namespace GalDanmaku.App.Windows;
 
-public sealed record WindowTarget(nint Handle, uint ProcessId, uint ThreadId, string ProcessName, string Title)
+public sealed record WindowTarget(nint Handle, uint ProcessId, uint ThreadId, string ProcessName, string Title,
+    string? ExecutablePath = null, string? ProcessIdentityError = null)
 {
     public string Details => $"{ProcessName} · PID {ProcessId} · HWND 0x{Handle:X}";
 }

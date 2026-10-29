@@ -2,11 +2,54 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.IO;
+using Microsoft.Win32.SafeHandles;
 
 namespace GalDanmaku.App.Windows;
 
 public static class WindowCatalog
 {
+    // Resolve only on explicit binding, never in the tracker's 50 ms polling loop.
+    public static WindowTarget ReadProcessIdentity(WindowTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        EnsureWindowIdentity(target);
+        using SafeProcessHandle process = NativeMethods.OpenProcess(NativeMethods.ProcessQueryLimitedInformation, false, target.ProcessId);
+        string? path = null;
+        string? error = null;
+        if (process.IsInvalid)
+        {
+            error = $"无法读取进程路径：{new Win32Exception(Marshal.GetLastWin32Error()).Message}";
+        }
+        else
+        {
+            // Windows extended-length paths can contain up to 32767 characters.
+            var buffer = new StringBuilder(32768);
+            uint size = (uint)buffer.Capacity;
+            if (NativeMethods.QueryFullProcessImageName(process, 0, buffer, ref size))
+                path = buffer.ToString();
+            else
+                error = $"无法读取进程路径：{new Win32Exception(Marshal.GetLastWin32Error()).Message}";
+        }
+
+        // A window may disappear or change owner while the process is being queried.
+        EnsureWindowIdentity(target);
+        return target with
+        {
+            ProcessName = path is not null ? Path.GetFileNameWithoutExtension(path) : target.ProcessName,
+            ExecutablePath = path,
+            ProcessIdentityError = error,
+        };
+    }
+
+    private static void EnsureWindowIdentity(WindowTarget target)
+    {
+        if (!NativeMethods.IsWindow(target.Handle) ||
+            NativeMethods.GetWindowThreadProcessId(target.Handle, out uint processId) != target.ThreadId ||
+            processId != target.ProcessId)
+            throw new InvalidOperationException("所选窗口已关闭或身份发生变化，请刷新列表后重试。");
+    }
+
     public static IReadOnlyList<WindowTarget> Enumerate()
     {
         var windows = new List<WindowTarget>();

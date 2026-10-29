@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace GalDanmaku.App.Windows;
 
@@ -20,6 +21,14 @@ internal static class NativeMethods
     internal const int CloakedAttribute = 14;
     internal const uint PreviousWindow = 3;
     internal const uint OwnerWindow = 4;
+    internal const uint ProcessQueryLimitedInformation = 0x1000;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern SafeProcessHandle OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, uint processId);
+
+    [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool QueryFullProcessImageName(SafeProcessHandle process, uint flags, StringBuilder path, ref uint size);
 
     internal delegate bool EnumWindowsCallback(nint window, nint parameter);
 

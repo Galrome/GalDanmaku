@@ -10,10 +10,12 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
 {
     private readonly Func<Action, CancellationToken, Task> _dispatch;
     private readonly Func<bool, TextSourceOptions, ITextSource> _sourceFactory;
+    private readonly TextSourceOptions _defaultOptions;
     private CancellationTokenSource? _cancellation;
     private Task _runTask = Task.CompletedTask;
     private bool _disposed;
     private bool _isAvailable = true;
+    private bool _rawOnly;
     private IReadOnlyList<string>? _mockScript;
     private Func<string, string>? _cleaner;
     private bool _isRunning;
@@ -38,6 +40,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(dispatch);
         _dispatch = dispatch;
+        _defaultOptions = options;
         _sourceFactory = sourceFactory ?? ((mock, settings) => mock ? new MockTextSource(null, _mockScript) : new LunaTextSource(settings));
         _endpoint = options.Endpoint;
         _initialRetry = options.InitialRetryMilliseconds.ToString(CultureInfo.InvariantCulture);
@@ -55,7 +58,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     public event EventHandler? ContextInvalidated;
     public IAsyncRelayCommand StopCommand { get; }
     public IReadOnlyList<TextSourceChoice> Sources { get; }
-    public TextSourceChoice SelectedSource { get => _selectedSource; set { if (CanEdit && value is not null) SetProperty(ref _selectedSource, value); } }
+    public TextSourceChoice SelectedSource { get => _selectedSource; set { if (CanEdit && value is not null && (!_rawOnly || !value.IsMock)) SetProperty(ref _selectedSource, value); } }
     public string Endpoint { get => _endpoint; set { if (CanEdit) SetProperty(ref _endpoint, value); } }
     public string InitialRetry { get => _initialRetry; set { if (CanEdit) SetProperty(ref _initialRetry, value); } }
     public string MaximumRetry { get => _maximumRetry; set { if (CanEdit) SetProperty(ref _maximumRetry, value); } }
@@ -84,7 +87,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     }
 
     // Applies a loaded game pack's declarative text-source settings. Only valid while stopped.
-    public void ApplyPack(GamePackTextSource config, Func<string, string> cleaner, string packName)
+    public void ApplyPack(GamePackTextSource config, Func<string, string> cleaner, string packName, bool lunaOnly = false)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(cleaner);
@@ -96,7 +99,8 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         _maximumRetry = options.MaximumRetryMilliseconds.ToString(CultureInfo.InvariantCulture);
         _connectTimeout = options.ConnectTimeoutMilliseconds.ToString(CultureInfo.InvariantCulture);
         _mergeGap = options.MergeGapMilliseconds.ToString(CultureInfo.InvariantCulture);
-        _selectedSource = config.Kind == GamePackTextSourceKind.Mock ? Sources[0] : Sources[1];
+        _selectedSource = !lunaOnly && config.Kind == GamePackTextSourceKind.Mock ? Sources[0] : Sources[1];
+        _rawOnly = lunaOnly;
         _mockScript = config.MockScript;
         _cleaner = cleaner;
         _isAvailable = true;
@@ -107,7 +111,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         UpdateCommands();
     }
 
-    // Without an active game pack nothing may start; a running source is stopped by the caller via StopAsync.
+    // The caller stops the old source before installing either a pack or the unindexed Luna defaults.
     public void SetUnavailable(string reason)
     {
         ArgumentNullException.ThrowIfNull(reason);
@@ -116,6 +120,15 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         _cleaner = null;
         Status = reason;
         UpdateCommands();
+    }
+
+    public void UseUnindexedLuna(string reason)
+    {
+        if (_disposed || _isRunning) throw new InvalidOperationException("文本源仍在运行，无法恢复默认原文配置。");
+        ApplyPack(new GamePackTextSource(GamePackTextSourceKind.Luna, _defaultOptions, []), text => text, "默认原文接收", lunaOnly: true);
+        _cleaner = null;
+        _mockScript = null;
+        Status = $"{reason} 可接收 Luna 原文；没有剧情索引，弹幕不可用。";
     }
 
     private void ClearCounters()
@@ -128,6 +141,11 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     private Task StartAsync()
     {
         if (!CanEdit) return Task.CompletedTask;
+        if (_rawOnly && SelectedSource.IsMock)
+        {
+            Status = "已绑定窗口时只能接收 Luna 原文，不能启动模拟文本源。";
+            return Task.CompletedTask;
+        }
         TextSourceOptions options;
         try
         {
