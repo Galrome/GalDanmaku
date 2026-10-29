@@ -11,8 +11,10 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" PrivateAssets="all" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <Compile Include="../../src/GalDanmaku.App/ViewModels/TextSourceViewModel.cs" Link="TextSourceViewModel.cs" />
+    <Compile Include="../../src/GalDanmaku.App/ViewModels/StoryLocatorViewModel.cs" Link="StoryLocatorViewModel.cs" />
     <ProjectReference Include="../../src/GalDanmaku.Core/GalDanmaku.Core.csproj" />
     <ProjectReference Include="../../src/GalDanmaku.Storage/GalDanmaku.Storage.csproj" />
     <Using Include="Xunit" />
+    <None Include="Fixtures/story-demo.json" Link="Fixtures/phase4-story.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -1,0 +1,41 @@
+<UserControl x:Class="GalDanmaku.App.Views.StoryLocatorPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
+  <Border Padding="18" CornerRadius="10" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+    <StackPanel>
+      <TextBlock Text="剧情节点定位" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12" />
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+        <TextBox AutomationProperties.AutomationId="StoryIndexPath" AutomationProperties.Name="剧情索引路径" Text="{Binding IndexPath, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanLoad}" Margin="0,0,8,0" />
+        <ui:Button Grid.Column="1" Content="浏览…" Click="OnBrowseIndex" IsEnabled="{Binding CanLoad}" Margin="0,0,8,0" />
+        <ui:Button Grid.Column="2" AutomationProperties.AutomationId="LoadStoryIndexButton" Content="加载索引" Command="{Binding LoadCommand}" />
+      </Grid>
+      <TextBlock AutomationProperties.AutomationId="StoryIndexStatus" Text="{Binding IndexStatus}" TextWrapping="Wrap" Margin="0,8,0,10" />
+      <CheckBox AutomationProperties.AutomationId="LiveStoryMode" Content="使用上方实时文本定位" IsChecked="{Binding IsLiveMode}" IsEnabled="{Binding CanLoad}" Margin="0,0,0,12" />
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+        <ComboBox AutomationProperties.AutomationId="StoryDemoScenario" AutomationProperties.Name="演示场景" ItemsSource="{Binding Scenarios}" SelectedItem="{Binding SelectedScenario}" DisplayMemberPath="Label" IsEnabled="{Binding CanInput}" Margin="0,0,8,0" />
+        <ui:Button Grid.Column="1" AutomationProperties.AutomationId="NextStoryDemoButton" Content="演示下一句" Command="{Binding NextDemoCommand}" Appearance="Primary" Margin="0,0,8,0" />
+        <ui:Button Grid.Column="2" AutomationProperties.AutomationId="ResetStoryContextButton" Content="重置上下文" Command="{Binding ResetCommand}" />
+      </Grid>
+      <TextBlock Text="{Binding DemoProgress}" TextWrapping="Wrap" FontSize="12" Margin="0,6,0,12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+      <TextBox AutomationProperties.AutomationId="StoryCurrentText" AutomationProperties.Name="定位输入原文" Text="{Binding LatestText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Height="62" VerticalScrollBarVisibility="Auto" />
+      <TextBlock AutomationProperties.AutomationId="StoryLocationStatus" Text="{Binding StatusText}" FontWeight="SemiBold" Margin="0,12,0,4" />
+      <TextBlock Text="{Binding Reason}" TextWrapping="Wrap" FontSize="12" />
+      <TextBlock AutomationProperties.AutomationId="StoryNodeId" Text="{Binding NodeText, StringFormat=固定节点：{0}}" TextWrapping="Wrap" Margin="0,8,0,4" />
+      <TextBlock Text="{Binding CandidateText, StringFormat=候选：{0}}" TextWrapping="Wrap" FontSize="12" />
+      <TextBlock AutomationProperties.AutomationId="StoryOffset" Text="{Binding OffsetText}" TextWrapping="Wrap" Margin="0,6,0,0" FontSize="12" />
+      <Expander Header="手动输入测试" Margin="0,10,0,0">
+        <StackPanel Margin="0,8,0,4">
+          <TextBox AutomationProperties.AutomationId="ManualStoryText" AutomationProperties.Name="手动测试原文" Text="{Binding ManualText, UpdateSourceTrigger=PropertyChanged}" MaxLength="65536" IsEnabled="{Binding CanInput}" />
+          <WrapPanel Margin="0,8,0,0">
+            <ui:Button Content="作为新对话输入" Command="{Binding NewDialogueCommand}" Margin="0,0,8,0" />
+            <ui:Button Content="更新当前对话" Command="{Binding UpdateDialogueCommand}" />
+          </WrapPanel>
+        </StackPanel>
+      </Expander>
+      <TextBlock Text="内置索引仅含虚构测试剧情。读档或跳转后请重置上下文；未知或有歧义时不提供绑定节点。计时从节点确认开始，当前不控制下方模拟弹幕。" TextWrapping="Wrap" FontSize="12" Margin="0,10,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+    </StackPanel>
+  </Border>
+</UserControl>

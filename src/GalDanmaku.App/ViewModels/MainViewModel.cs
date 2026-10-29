@@ -46,6 +46,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
         TextSource = new TextSourceViewModel(textOptions, (action, token) => dispatcher.InvokeAsync(action, DispatcherPriority.Background, token).Task)
         { ConfigurationNotice = configNotice };
+        Story = new StoryLocatorViewModel(TextSource, Path.Combine(AppContext.BaseDirectory, "story-demo.json"));
         string databasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "danmaku.db");
         _session = new LocalCommentSession(new SqliteCommentRepository(databasePath));
         _overlay = new OverlayWindow(_session.Playback);
@@ -53,7 +54,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _selectedNode = Nodes[0];
         Colors = [new("白色", "#FFFFFF"), new("金色", "#FFD166"), new("天蓝", "#80D8FF")];
         _selectedColor = Colors[0];
-        InitializeCommand = new AsyncRelayCommand(() => LoadNodeAsync(SelectedNode), () => IsLocalIdle);
+        InitializeCommand = new AsyncRelayCommand(InitializeAsync, () => IsLocalIdle);
         ReplayCommand = new AsyncRelayCommand(() => LoadNodeAsync(SelectedNode), () => IsLocalIdle);
         SendCommand = new AsyncRelayCommand(SendAsync, () => CanSend);
         _switchNodeCommand = new AsyncRelayCommand<MockNode>(node => LoadNodeAsync(node!), _ => IsLocalIdle);
@@ -71,6 +72,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     public ObservableCollection<WindowTarget> Windows { get; } = [];
     public TextSourceViewModel TextSource { get; }
+    public StoryLocatorViewModel Story { get; }
     public IReadOnlyList<DisplayArea> Areas { get; }
     public IRelayCommand RefreshCommand { get; }
     public IRelayCommand BindCommand { get; }
@@ -201,11 +203,18 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _disposed = true;
         _nodeClock.Stop();
         _nodeClock.Tick -= OnNodeClockTick;
+        await Story.DisposeAsync();
         await TextSource.DisposeAsync();
         _session.Dispose();
         _tracker.Changed -= OnWindowChanged;
         _tracker.Dispose();
         _overlay.Close();
+    }
+
+    private async Task InitializeAsync()
+    {
+        await Story.LoadCommand.ExecuteAsync(null);
+        if (!_disposed) await LoadNodeAsync(SelectedNode);
     }
 
     private async Task LoadNodeAsync(MockNode node)
@@ -290,7 +299,11 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _switchNodeCommand.NotifyCanExecuteChanged();
     }
 
-    private void OnNodeClockTick(object? sender, EventArgs args) => OnPropertyChanged(nameof(NodeTime));
+    private void OnNodeClockTick(object? sender, EventArgs args)
+    {
+        OnPropertyChanged(nameof(NodeTime));
+        Story.RefreshClock();
+    }
 
     private static bool IsLocalDataError(Exception exception) => exception is
         SqliteException or IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException or FormatException or InvalidOperationException;

@@ -47,6 +47,8 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     }
 
     public IAsyncRelayCommand StartCommand { get; }
+    public event EventHandler<DialogueEvent>? DialogueReceived;
+    public event EventHandler? ContextInvalidated;
     public IAsyncRelayCommand StopCommand { get; }
     public IReadOnlyList<TextSourceChoice> Sources { get; }
     public TextSourceChoice SelectedSource { get => _selectedSource; set { if (CanEdit && value is not null) SetProperty(ref _selectedSource, value); } }
@@ -70,6 +72,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     {
         if (_disposed) { await _runTask; return; }
         _disposed = true;
+        ContextInvalidated?.Invoke(this, EventArgs.Empty);
         _cancellation?.Cancel();
         UpdateCommands();
         await _runTask;
@@ -97,6 +100,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         LatestText = "";
         LatestEvent = "尚无对话事件";
         Status = "正在启动文本源…";
+        ContextInvalidated?.Invoke(this, EventArgs.Empty);
         _cancellation = new CancellationTokenSource();
         _isRunning = true;
         _isStopping = false;
@@ -117,7 +121,11 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
                 if (_disposed || owner.IsCancellationRequested || !ReferenceEquals(owner, _cancellation)) return;
                 if (item is TextConnectionChanged connection)
                 {
-                    if (connection.State == TextConnectionState.Retrying) processor.OnDisconnected();
+                    if (connection.State == TextConnectionState.Retrying)
+                    {
+                        processor.OnDisconnected();
+                        ContextInvalidated?.Invoke(this, EventArgs.Empty);
+                    }
                     Status = connection.Detail;
                 }
                 else if (item is TextFrame frame)
@@ -127,6 +135,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
                     if (result.Event is not { } dialogue) { FilteredCount++; return; }
                     if (dialogue.Kind == DialogueEventKind.NewDialogue) NewCount++; else UpdateCount++;
                     LatestText = dialogue.Text;
+                    DialogueReceived?.Invoke(this, dialogue);
                     LatestEvent = $"{(dialogue.Kind == DialogueEventKind.NewDialogue ? "新对话 · NewDialogue" : "文本更新 · TextUpdated")} · 会话内 #{dialogue.DialogueId} · 事件 {dialogue.Sequence} · {dialogue.ReceivedAt.ToLocalTime():HH:mm:ss.fff}";
                 }
             }, token)), owner.Token);
@@ -141,6 +150,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         }
         finally
         {
+            if (!_disposed) ContextInvalidated?.Invoke(this, EventArgs.Empty);
             if (!_disposed && owner.IsCancellationRequested) Status = "已停止接收。再次开始会重置本次计数。";
             _isRunning = false;
             _isStopping = false;
@@ -154,6 +164,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     {
         if (_cancellation is null) return;
         _isStopping = true;
+        ContextInvalidated?.Invoke(this, EventArgs.Empty);
         Status = "正在停止…";
         _cancellation.Cancel();
         UpdateCommands();

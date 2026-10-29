@@ -19,6 +19,7 @@
         <TextBlock Text="让故事多一层共鸣" FontSize="26" FontWeight="SemiBold" />
         <TextBlock Text="接收游戏原文；在独立的模拟剧情节点保存与重播本地弹幕。" Margin="0,6,0,22" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
         <views:TextSourcePanel DataContext="{Binding TextSource}" Margin="0,0,0,20" />
+        <views:StoryLocatorPanel DataContext="{Binding Story}" Margin="0,0,0,20" />
 
         <Border Padding="18" CornerRadius="10" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
           <StackPanel>
