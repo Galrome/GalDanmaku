@@ -6,6 +6,15 @@ using GalDanmaku.Core.Text;
 
 namespace GalDanmaku.App.ViewModels;
 
+// Raised after every locator state change (including resets). DrivesBinding is false when the index did not
+// come from a game pack, in which case the location must never bind or load comments.
+public sealed class StoryLocationChangedEventArgs(StoryLocation location, long confirmationVersion, bool drivesBinding) : EventArgs
+{
+    public StoryLocation Location { get; } = location;
+    public long ConfirmationVersion { get; } = confirmationVersion;
+    public bool DrivesBinding { get; } = drivesBinding;
+}
+
 public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
 {
     private readonly TextSourceViewModel _source;
@@ -22,6 +31,10 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
     private bool _isLiveMode;
     private bool _loading;
     private bool _disposed;
+    private bool _drivesBinding;
+    private bool _packActive;
+    private CancellationTokenSource? _importCancellation;
+    private long _indexGeneration;
     private Guid _sessionId = Guid.NewGuid();
     private long _dialogueId;
     private long _sequence;
@@ -36,7 +49,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
         _loader = loader ?? StoryIndex.LoadAsync;
         Scenarios = [new("route-a", "路线 A"), new("route-b", "路线 B"), new("load-repeat", "读档至重复台词"), new("typing", "逐字输出")];
         _selectedScenario = Scenarios[0];
-        LoadCommand = new AsyncRelayCommand(LoadAsync, () => CanLoad);
+        LoadCommand = new AsyncRelayCommand(LoadAsync, () => CanImport);
         ResetCommand = new RelayCommand(Reset, () => !_disposed);
         NextDemoCommand = new RelayCommand(NextDemo, () => CanDemo);
         NewDialogueCommand = new RelayCommand(() => ApplyManual(false), () => CanInput);
@@ -45,6 +58,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
         source.ContextInvalidated += OnContextInvalidated;
     }
 
+    public event EventHandler<StoryLocationChangedEventArgs>? LocationChanged;
     public IAsyncRelayCommand LoadCommand { get; }
     public IRelayCommand ResetCommand { get; }
     public IRelayCommand NextDemoCommand { get; }
@@ -52,12 +66,17 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
     public IRelayCommand UpdateDialogueCommand { get; }
     public IReadOnlyList<StoryDemoScenario> Scenarios { get; }
     public bool CanLoad => !_loading && !_disposed;
+    // Manual JSON import is a locate-only debugging aid and is unavailable while a game pack provides the index.
+    public bool CanImport => CanLoad && !_packActive;
     public bool CanInput => CanLoad && !IsLiveMode && _locator is not null;
     public bool CanDemo => CanInput && DemoFrames().Count > _demoPosition;
     public string IndexPath { get => _indexPath; set { if (CanLoad) SetProperty(ref _indexPath, value); } }
     public string IndexStatus { get => _indexStatus; private set => SetProperty(ref _indexStatus, value); }
     public string LatestText { get => _latestText; private set => SetProperty(ref _latestText, value); }
     public string ManualText { get => _manualText; set => SetProperty(ref _manualText, value); }
+    public bool DrivesBinding => _drivesBinding;
+    public StoryLocation CurrentLocation => _locator?.Current ?? NoLocation;
+    public long ConfirmationVersion => _locator?.ConfirmationVersion ?? 0;
     public StoryLocationStatus LocationStatus => _locator?.Current.Status ?? StoryLocationStatus.Unknown;
     public string? CurrentNodeId => _locator?.Current.Node?.Id;
     public long? OffsetMilliseconds => _locator?.OffsetMilliseconds;
@@ -90,6 +109,39 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
         set { if (value is not null && CanInput && SetProperty(ref _selectedScenario, value)) Reset(); }
     }
 
+    // Installs the index of the active game pack. Replaces any previous index and context.
+    public void UseIndex(StoryIndex index, string? status = null, bool liveMode = true)
+    {
+        ArgumentNullException.ThrowIfNull(index);
+        if (_disposed) return;
+        _indexGeneration++;
+        _index = index;
+        _locator = new StoryLocator(index, _timeProvider);
+        _drivesBinding = true;
+        _packActive = true;
+        _loading = false;
+        _importCancellation?.Cancel();
+        if (_isLiveMode != liveMode) { _isLiveMode = liveMode; OnPropertyChanged(nameof(IsLiveMode)); }
+        IndexStatus = status ?? $"{index.GameId} · {index.Nodes.Count} 个固定节点 · 来自游戏包";
+        Reset();
+    }
+
+    // Drops the index entirely so no stale game remains locatable (no game pack active / pack failed).
+    public void ClearIndex(string status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        if (_disposed) return;
+        _indexGeneration++;
+        _index = null;
+        _locator = null;
+        _drivesBinding = false;
+        _packActive = false;
+        _loading = false;
+        _importCancellation?.Cancel();
+        IndexStatus = status;
+        Reset();
+    }
+
     public void RefreshClock() => OnPropertyChanged(nameof(OffsetText));
 
     public async ValueTask DisposeAsync()
@@ -107,38 +159,48 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
 
     private async Task LoadAsync()
     {
-        if (!CanLoad) return;
+        if (!CanImport) return;
         string path = IndexPath.Trim();
         _loading = true;
+        long generation = ++_indexGeneration;
+        using var import = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _importCancellation = import;
         // A failed replacement must not leave a previously confirmed game/node active.
+        // A manually imported index has no game pack, so it never drives comment binding.
         _index = null;
         _locator = null;
+        _drivesBinding = false;
         Reset();
         IndexStatus = "正在读取剧情索引…";
         try
         {
-            StoryIndex index = await _loader(path, _lifetime.Token);
-            if (_disposed) return;
+            StoryIndex index = await _loader(path, import.Token);
+            // A game pack (or a newer import) may have installed its own index meanwhile; never overwrite it.
+            if (_disposed || generation != _indexGeneration) return;
             _index = index;
             _locator = new StoryLocator(index, _timeProvider);
-            IndexStatus = $"{index.GameId} · {index.Nodes.Count} 个固定节点 · 已加载";
+            IndexStatus = $"{index.GameId} · {index.Nodes.Count} 个固定节点 · 已加载（仅定位调试，不绑定弹幕）";
         }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested || generation != _indexGeneration)
         {
-            // Window shutdown cancels the import and must not apply a late result.
+            // Window shutdown or a game pack taking over cancels the import; a late result must not be applied.
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
-            if (!_disposed) IndexStatus = $"加载失败：{exception.Message}";
+            if (!_disposed && generation == _indexGeneration) IndexStatus = $"加载失败：{exception.Message}";
         }
         finally
         {
-            _loading = false;
-            if (!_disposed) NotifyState();
+            if (ReferenceEquals(_importCancellation, import)) _importCancellation = null;
+            if (generation == _indexGeneration)
+            {
+                _loading = false;
+                if (!_disposed) NotifyState();
+            }
         }
     }
 
-    private void Reset()
+    public void Reset()
     {
         _locator?.Reset();
         _sessionId = Guid.NewGuid();
@@ -150,7 +212,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
 
     private void OnDialogueReceived(object? sender, DialogueEvent dialogue)
     {
-        if (_disposed || _loading || !IsLiveMode || _locator is null) return;
+        if (_disposed || !IsLiveMode || _locator is null) return;
         LatestText = dialogue.Text;
         _locator.Process(dialogue);
         NotifyState();
@@ -201,7 +263,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
 
     private void NotifyState()
     {
-        foreach (string property in new[] { nameof(CanLoad), nameof(CanInput), nameof(CanDemo), nameof(LocationStatus),
+        foreach (string property in new[] { nameof(CanLoad), nameof(CanImport), nameof(CanInput), nameof(CanDemo), nameof(LocationStatus),
             nameof(CurrentNodeId), nameof(OffsetMilliseconds), nameof(HistoryCount), nameof(StatusText), nameof(Reason),
             nameof(NodeText), nameof(CandidateText), nameof(OffsetText), nameof(DemoProgress) }) OnPropertyChanged(property);
         LoadCommand.NotifyCanExecuteChanged();
@@ -209,7 +271,10 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
         NextDemoCommand.NotifyCanExecuteChanged();
         NewDialogueCommand.NotifyCanExecuteChanged();
         UpdateDialogueCommand.NotifyCanExecuteChanged();
+        LocationChanged?.Invoke(this, new StoryLocationChangedEventArgs(CurrentLocation, ConfirmationVersion, _drivesBinding));
     }
+
+    private static readonly StoryLocation NoLocation = new(StoryLocationStatus.Unknown, null, [], "尚未加载剧情索引。");
 }
 
 public sealed record StoryDemoScenario(string Id, string Label);

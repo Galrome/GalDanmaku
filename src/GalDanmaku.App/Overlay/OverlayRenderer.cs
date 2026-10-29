@@ -20,6 +20,7 @@ public sealed class OverlayRenderer : FrameworkElement, IDisposable
     private double _pixelsPerDip;
     private long _resetVersion = -1;
     private bool _playing;
+    private bool _hasDrawnItems;
     private bool _disposed;
 
     public OverlayRenderer(NodePlayback playback)
@@ -117,17 +118,27 @@ public sealed class OverlayRenderer : FrameworkElement, IDisposable
         ResetIfNeeded();
         ConfigureEngine();
         double now = _clock.Elapsed.TotalSeconds;
-        double elapsed = now - _previousSeconds;
+        // Window drags, sleep or debugger pauses must not fast-forward node time or flush every comment at once.
+        double elapsed = DanmakuEngine.ClampFrameSeconds(Math.Max(0, now - _previousSeconds));
         _previousSeconds = now;
         _engine.Advance(elapsed);
         _playback.Advance(elapsed, comment =>
         {
             // Saved entries remain replayable after resizing; an impossible size must not block the queue.
             if (!_engine.CanFit(comment)) return true;
+            // All slots busy: skip text measurement for entries that cannot be placed this frame.
+            if (_engine.Items.Count >= DanmakuEngine.MaximumComments) return false;
             TextDrawing text = GetText(comment.Text, comment.FontSize, comment.Color);
             return _engine.TryAdd(comment, text.Width);
         });
-        InvalidateVisual();
+        // Idle frames with nothing on screen need no re-render.
+        bool hasItems = _engine.Items.Count > 0;
+        if (hasItems || _hasDrawnItems)
+        {
+            InvalidateVisual();
+        }
+
+        _hasDrawnItems = hasItems;
     }
 
     private void ResetIfNeeded()

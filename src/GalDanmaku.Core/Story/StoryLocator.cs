@@ -23,6 +23,8 @@ public sealed class StoryLocator
 
     public StoryLocation Current { get; private set; } = Unknown("等待文本。");
     public int HistoryCount => _history.Count;
+    // Increments whenever a node is (re)confirmed; never rewinds, even across Reset.
+    public long ConfirmationVersion { get; private set; }
     public long? OffsetMilliseconds => _confirmedAt is long started
         ? Math.Max(0, (long)_timeProvider.GetElapsedTime(started).TotalMilliseconds)
         : null;
@@ -71,7 +73,10 @@ public sealed class StoryLocator
         {
             StoryNode node = candidates[0];
             if (!sameDialogue || Current.Node?.Id != node.Id || _confirmedAt is null)
+            {
                 _confirmedAt = _timeProvider.GetTimestamp();
+                ConfirmationVersion++;
+            }
             next = new(StoryLocationStatus.Confirmed, node, candidates, "已通过完整文本及近期上下文确认节点。");
         }
         else

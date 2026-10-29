@@ -12,6 +12,7 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <Compile Include="../../src/GalDanmaku.App/ViewModels/TextSourceViewModel.cs" Link="TextSourceViewModel.cs" />
     <Compile Include="../../src/GalDanmaku.App/ViewModels/StoryLocatorViewModel.cs" Link="StoryLocatorViewModel.cs" />
+    <Compile Include="../../src/GalDanmaku.App/ViewModels/GamePackViewModel.cs" Link="GamePackViewModel.cs" />
     <ProjectReference Include="../../src/GalDanmaku.Core/GalDanmaku.Core.csproj" />
     <ProjectReference Include="../../src/GalDanmaku.Storage/GalDanmaku.Storage.csproj" />
     <Using Include="Xunit" />

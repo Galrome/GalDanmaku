@@ -1,6 +1,7 @@
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using GalDanmaku.Core.GamePacks;
 using GalDanmaku.Core.Text;
 
 namespace GalDanmaku.App.ViewModels;
@@ -12,6 +13,9 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     private CancellationTokenSource? _cancellation;
     private Task _runTask = Task.CompletedTask;
     private bool _disposed;
+    private bool _isAvailable = true;
+    private IReadOnlyList<string>? _mockScript;
+    private Func<string, string>? _cleaner;
     private bool _isRunning;
     private bool _isStopping;
     private string _endpoint;
@@ -34,7 +38,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(dispatch);
         _dispatch = dispatch;
-        _sourceFactory = sourceFactory ?? ((mock, settings) => mock ? new MockTextSource() : new LunaTextSource(settings));
+        _sourceFactory = sourceFactory ?? ((mock, settings) => mock ? new MockTextSource(null, _mockScript) : new LunaTextSource(settings));
         _endpoint = options.Endpoint;
         _initialRetry = options.InitialRetryMilliseconds.ToString(CultureInfo.InvariantCulture);
         _maximumRetry = options.MaximumRetryMilliseconds.ToString(CultureInfo.InvariantCulture);
@@ -60,7 +64,8 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     public string ConfigurationNotice { get; init; } = "界面修改仅本次运行有效；启动默认值读取程序目录的 text-source.json。";
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public bool IsRunning => _isRunning;
-    public bool CanEdit => !_isRunning && !_disposed;
+    public bool CanEdit => !_isRunning && !_disposed && _isAvailable;
+    public bool IsAvailable => _isAvailable;
     public long RawCount { get => _rawCount; private set => SetProperty(ref _rawCount, value); }
     public long NewCount { get => _newCount; private set => SetProperty(ref _newCount, value); }
     public long UpdateCount { get => _updateCount; private set => SetProperty(ref _updateCount, value); }
@@ -76,6 +81,48 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         _cancellation?.Cancel();
         UpdateCommands();
         await _runTask;
+    }
+
+    // Applies a loaded game pack's declarative text-source settings. Only valid while stopped.
+    public void ApplyPack(GamePackTextSource config, Func<string, string> cleaner, string packName)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(cleaner);
+        ArgumentNullException.ThrowIfNull(packName);
+        if (_disposed || _isRunning) throw new InvalidOperationException("文本源仍在运行，无法应用游戏包配置。");
+        TextSourceOptions options = config.Options;
+        _endpoint = options.Endpoint;
+        _initialRetry = options.InitialRetryMilliseconds.ToString(CultureInfo.InvariantCulture);
+        _maximumRetry = options.MaximumRetryMilliseconds.ToString(CultureInfo.InvariantCulture);
+        _connectTimeout = options.ConnectTimeoutMilliseconds.ToString(CultureInfo.InvariantCulture);
+        _mergeGap = options.MergeGapMilliseconds.ToString(CultureInfo.InvariantCulture);
+        _selectedSource = config.Kind == GamePackTextSourceKind.Mock ? Sources[0] : Sources[1];
+        _mockScript = config.MockScript;
+        _cleaner = cleaner;
+        _isAvailable = true;
+        ClearCounters();
+        foreach (string name in new[] { nameof(Endpoint), nameof(InitialRetry), nameof(MaximumRetry), nameof(ConnectTimeout), nameof(MergeGap), nameof(SelectedSource) })
+            OnPropertyChanged(name);
+        Status = $"已应用游戏包「{packName}」的文本源配置，可开始接收。";
+        UpdateCommands();
+    }
+
+    // Without an active game pack nothing may start; a running source is stopped by the caller via StopAsync.
+    public void SetUnavailable(string reason)
+    {
+        ArgumentNullException.ThrowIfNull(reason);
+        _isAvailable = false;
+        _mockScript = null;
+        _cleaner = null;
+        Status = reason;
+        UpdateCommands();
+    }
+
+    private void ClearCounters()
+    {
+        RawCount = NewCount = UpdateCount = FilteredCount = 0;
+        LatestText = "";
+        LatestEvent = "尚无对话事件";
     }
 
     private Task StartAsync()
@@ -96,22 +143,22 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         }
         catch (ArgumentException exception) { Status = $"配置无效：{exception.Message}"; return Task.CompletedTask; }
 
-        RawCount = NewCount = UpdateCount = FilteredCount = 0;
-        LatestText = "";
-        LatestEvent = "尚无对话事件";
+        ClearCounters();
         Status = "正在启动文本源…";
         ContextInvalidated?.Invoke(this, EventArgs.Empty);
         _cancellation = new CancellationTokenSource();
         _isRunning = true;
         _isStopping = false;
         UpdateCommands();
-        _runTask = RunAsync(options, SelectedSource.IsMock, _cancellation);
+        _runTask = RunAsync(options, SelectedSource.IsMock, _cleaner, _cancellation);
         return _runTask;
     }
 
-    private async Task RunAsync(TextSourceOptions options, bool mock, CancellationTokenSource owner)
+    private async Task RunAsync(TextSourceOptions options, bool mock, Func<string, string>? cleaner, CancellationTokenSource owner)
     {
         var processor = new DialogueProcessor(TimeSpan.FromMilliseconds(options.MergeGapMilliseconds));
+        // Set on disconnect: the story locator is reset then, so the first repeated frame must be re-published.
+        bool reacquire = false;
         try
         {
             ITextSource source = _sourceFactory(mock, options);
@@ -124,6 +171,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
                     if (connection.State == TextConnectionState.Retrying)
                     {
                         processor.OnDisconnected();
+                        reacquire = true;
                         ContextInvalidated?.Invoke(this, EventArgs.Empty);
                     }
                     Status = connection.Detail;
@@ -131,8 +179,12 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
                 else if (item is TextFrame frame)
                 {
                     RawCount++;
-                    TextProcessResult result = processor.Process(frame.Text, frame.ReceivedAt);
-                    if (result.Event is not { } dialogue) { FilteredCount++; return; }
+                    TextProcessResult result = processor.Process(cleaner is null ? frame.Text : cleaner(frame.Text), frame.ReceivedAt);
+                    DialogueEvent? published = result.Event;
+                    if (published is null && reacquire && result.FilterReason == TextFilterReason.Duplicate)
+                        published = processor.Reacquire(frame.ReceivedAt);
+                    if (result.FilterReason is not (TextFilterReason.Empty or TextFilterReason.Invalid)) reacquire = false;
+                    if (published is not { } dialogue) { FilteredCount++; return; }
                     if (dialogue.Kind == DialogueEventKind.NewDialogue) NewCount++; else UpdateCount++;
                     LatestText = dialogue.Text;
                     DialogueReceived?.Invoke(this, dialogue);
@@ -160,9 +212,10 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private async Task StopAsync()
+    // Safe to call when nothing is running; completes once the run task has ended.
+    public async Task StopAsync()
     {
-        if (_cancellation is null) return;
+        if (_cancellation is null) { await _runTask; return; }
         _isStopping = true;
         ContextInvalidated?.Invoke(this, EventArgs.Empty);
         Status = "正在停止…";

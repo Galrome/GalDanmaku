@@ -48,6 +48,18 @@ public sealed class DialogueProcessor
     // A reconnect can repeat the last frame; preserve deduplication, but never merge across an unknown gap.
     public void OnDisconnected() => _canMerge = false;
 
+    // After a reconnect the consumer's story context was reset, so a repeated frame that Process filtered as
+    // a duplicate is the only evidence of the current line. Republishes it as a new dialogue; null if nothing was seen.
+    public DialogueEvent? Reacquire(DateTimeOffset receivedAt)
+    {
+        if (_previous is null) return null;
+        _dialogueId++;
+        _sequence++;
+        _lastChange = receivedAt;
+        _canMerge = true;
+        return new(_sessionId, _dialogueId, _sequence, receivedAt, DialogueEventKind.NewDialogue, _previous);
+    }
+
     public void Reset()
     {
         _sessionId = Guid.NewGuid();

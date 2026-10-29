@@ -5,16 +5,25 @@ namespace GalDanmaku.Core;
 public sealed class DanmakuEngine
 {
     public const int MaximumComments = 64;
+    // Frame deltas above this (window stalls, system sleep, debugger pauses) are treated as a pause, not as elapsed story time.
+    public const double MaximumFrameSeconds = 0.5;
     private const double EdgePadding = 8;
     private const double CommentGap = 24;
     private readonly List<DanmakuItem> _items = [];
     private readonly ReadOnlyCollection<DanmakuItem> _readOnlyItems;
+    private readonly List<DanmakuItem> _occupied = [];
     private DanmakuSettings _settings = new();
     private double _width;
     private double _height;
     private int _nextLane;
 
     public DanmakuEngine() => _readOnlyItems = _items.AsReadOnly();
+
+    public static double ClampFrameSeconds(double elapsedSeconds)
+    {
+        ValidateNonNegativeFinite(elapsedSeconds, nameof(elapsedSeconds));
+        return Math.Min(elapsedSeconds, MaximumFrameSeconds);
+    }
 
     public IReadOnlyList<DanmakuItem> Items => _readOnlyItems;
     public double LineHeight => _settings.FontSize * 1.6;
@@ -84,7 +93,18 @@ public sealed class DanmakuEngine
         double height = comment.FontSize * 1.6;
         double y = EdgePadding;
         // Vertical intervals allow persisted comments of different sizes to share the viewport safely.
-        foreach (DanmakuItem item in _items.Where(item => item.X + item.Width + CommentGap > _width).OrderBy(item => item.Y))
+        // A reused buffer keeps this per-frame retry path allocation-free (it runs for every pending comment).
+        _occupied.Clear();
+        foreach (DanmakuItem item in _items)
+        {
+            if (item.X + item.Width + CommentGap > _width)
+            {
+                _occupied.Add(item);
+            }
+        }
+
+        _occupied.Sort(static (left, right) => left.Y.CompareTo(right.Y));
+        foreach (DanmakuItem item in _occupied)
         {
             if (y + height <= item.Y)
             {

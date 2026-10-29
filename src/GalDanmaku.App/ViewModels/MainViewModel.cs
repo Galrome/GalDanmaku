@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using GalDanmaku.App.Overlay;
 using GalDanmaku.App.Windows;
 using GalDanmaku.Core;
+using GalDanmaku.Core.GamePacks;
 using GalDanmaku.Core.Text;
 using GalDanmaku.Storage;
 using Microsoft.Data.Sqlite;
@@ -20,11 +21,9 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly OverlayWindow _overlay;
     private readonly LocalCommentSession _session;
     private readonly DispatcherTimer _nodeClock;
-    private readonly IAsyncRelayCommand<MockNode> _switchNodeCommand;
     private bool _localBusy;
     private string _draftText = "";
-    private string _localStatus = "正在加载本地弹幕…";
-    private MockNode _selectedNode;
+    private string _localStatus = "未加载游戏包，弹幕不可用。";
     private CommentColor _selectedColor;
     private WindowTarget? _selectedWindow;
     private bool _isBound;
@@ -35,6 +34,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     private double _opacityPercent = 90;
     private double _speed = 140;
     private DisplayArea _selectedArea;
+    private WindowSnapshot? _lastSnapshot;
 
     public MainViewModel()
     {
@@ -50,14 +50,17 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         string databasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "danmaku.db");
         _session = new LocalCommentSession(new SqliteCommentRepository(databasePath));
         _overlay = new OverlayWindow(_session.Playback);
-        Nodes = [new("node-a", "模拟节点 A"), new("node-b", "模拟节点 B")];
-        _selectedNode = Nodes[0];
+        var roots = new List<string> { Path.Combine(AppContext.BaseDirectory, "gamepacks") };
+        string userPacks = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "gamepacks");
+        if (Directory.Exists(userPacks)) roots.Add(userPacks);
+        Pack = new GamePackViewModel(_session, TextSource, Story, roots: roots);
+        Pack.ActiveChanged += OnPackActiveChanged;
+        TextSource.PropertyChanged += OnTextSourceChanged;
         Colors = [new("白色", "#FFFFFF"), new("金色", "#FFD166"), new("天蓝", "#80D8FF")];
         _selectedColor = Colors[0];
         InitializeCommand = new AsyncRelayCommand(InitializeAsync, () => IsLocalIdle);
-        ReplayCommand = new AsyncRelayCommand(() => LoadNodeAsync(SelectedNode), () => IsLocalIdle);
+        ReplayCommand = new RelayCommand(Replay, () => CanReplay);
         SendCommand = new AsyncRelayCommand(SendAsync, () => CanSend);
-        _switchNodeCommand = new AsyncRelayCommand<MockNode>(node => LoadNodeAsync(node!), _ => IsLocalIdle);
         _nodeClock = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(200) };
         _nodeClock.Tick += OnNodeClockTick;
         _nodeClock.Start();
@@ -71,6 +74,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     public ObservableCollection<WindowTarget> Windows { get; } = [];
+    public GamePackViewModel Pack { get; }
     public TextSourceViewModel TextSource { get; }
     public StoryLocatorViewModel Story { get; }
     public IReadOnlyList<DisplayArea> Areas { get; }
@@ -78,14 +82,29 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     public IRelayCommand BindCommand { get; }
     public IRelayCommand UnbindCommand { get; }
     public IAsyncRelayCommand InitializeCommand { get; }
-    public IAsyncRelayCommand ReplayCommand { get; }
+    public IRelayCommand ReplayCommand { get; }
     public IAsyncRelayCommand SendCommand { get; }
-    public IReadOnlyList<MockNode> Nodes { get; }
     public IReadOnlyList<CommentColor> Colors { get; }
     public bool IsLocalIdle => !_localBusy && !_disposed;
-    public bool CanSend => IsLocalIdle && _session.IsLoaded && !string.IsNullOrWhiteSpace(DraftText);
+    public bool CanSend => IsLocalIdle && Pack.Coordinator is { CanSend: true } && !string.IsNullOrWhiteSpace(DraftText);
+    public bool CanReplay => IsLocalIdle && Pack.Coordinator is { State: NodeBindingState.Active, BoundNodeId: not null } or { State: NodeBindingState.Failed };
+    public string ActivePackText => Pack.ActiveSummary;
+    public string BoundNodeText => Pack.Coordinator?.BoundNodeId is { } nodeId ? $"当前节点：{nodeId}" : "当前节点：未确认，弹幕已暂停";
+    public string CoordinatorText => Pack.Coordinator is not { } coordinator ? "未加载游戏包，弹幕不可用。" : coordinator.State switch
+    {
+        NodeBindingState.Loading => "正在加载当前节点的弹幕…",
+        NodeBindingState.Active when IsTargetVisible => "已确认当前节点，弹幕播放中。",
+        NodeBindingState.Active when !IsBound => "已确认当前节点。尚未绑定目标窗口，绑定后才会显示弹幕。",
+        NodeBindingState.Active => "已确认当前节点。目标窗口回到前台后播放弹幕。",
+        NodeBindingState.Failed => $"节点弹幕加载失败：{coordinator.LastError} 通常是本地数据库被占用或不可写；处理后点击“重播 / 重试当前节点”。",
+        _ when !TextSource.IsRunning => "等待剧情定位确认节点。文本源未运行，请在“实时文本接收”中点击“开始接收”。",
+        _ => "等待剧情定位确认节点。",
+    };
     public int SavedCount => _session.Playback.SavedCount;
-    public string NodeTime => $"节点时间 {_session.Playback.OffsetMilliseconds / 1000.0:0.0} 秒 · {(_session.Playback.IsPlaying ? "播放中" : "已暂停")}";
+    // The coordinator marks playback as running once a node loads, but the clock only advances while the
+    // overlay renders, i.e. while the target is visible. Report what actually happens.
+    private bool IsTargetVisible => _lastSnapshot?.State == TargetState.Visible;
+    public string NodeTime => $"节点时间 {_session.Playback.OffsetMilliseconds / 1000.0:0.0} 秒 · {(IsTargetVisible && _session.Playback.IsPlaying ? "播放中" : "已暂停")}";
     public string LocalStatus { get => _localStatus; private set => SetProperty(ref _localStatus, value); }
     public string DraftText
     {
@@ -95,18 +114,6 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             if (SetProperty(ref _draftText, value))
             {
                 SendCommand.NotifyCanExecuteChanged();
-            }
-        }
-    }
-
-    public MockNode SelectedNode
-    {
-        get => _selectedNode;
-        set
-        {
-            if (value is not null && value != _selectedNode && IsLocalIdle)
-            {
-                _switchNodeCommand.Execute(value);
             }
         }
     }
@@ -203,57 +210,78 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         _disposed = true;
         _nodeClock.Stop();
         _nodeClock.Tick -= OnNodeClockTick;
-        await Story.DisposeAsync();
-        await TextSource.DisposeAsync();
-        _session.Dispose();
+        // Stop polling the target first so nothing repositions or unbinds while the rest is torn down.
         _tracker.Changed -= OnWindowChanged;
         _tracker.Dispose();
+        _overlay.Suspend();
+        Pack.ActiveChanged -= OnPackActiveChanged;
+        TextSource.PropertyChanged -= OnTextSourceChanged;
+        // Cancels and awaits any in-flight pack load and disposes the coordinator before the session goes away.
+        await Pack.DisposeAsync();
+        await Story.DisposeAsync();
+        await TextSource.DisposeAsync();
+        // A save in flight is canceled by the session: the repository commits atomically or rolls back.
+        // Wait for it so the process never exits while the database thread is still writing.
+        _session.Dispose();
+        if (SendCommand.ExecutionTask is { } sending) await Task.WhenAny(sending);
         _overlay.Close();
     }
 
     private async Task InitializeAsync()
     {
-        await Story.LoadCommand.ExecuteAsync(null);
-        if (!_disposed) await LoadNodeAsync(SelectedNode);
+        await Pack.RefreshAsync();
+        if (!_disposed) UpdateLocalState();
     }
 
-    private async Task LoadNodeAsync(MockNode node)
+    private void Replay()
     {
-        if (!IsLocalIdle)
+        if (!CanReplay) return;
+        if (Pack.Coordinator is { State: NodeBindingState.Failed } failed)
         {
+            failed.Retry();
             return;
         }
 
-        SetLocalBusy(true);
-        _overlay.PlaybackEnabled = false;
-        LocalStatus = $"正在加载{node.Label}…";
-        try
+        _session.Playback.Replay();
+        _overlay.ResetVisuals();
+        LocalStatus = $"正在重播节点 {Pack.Coordinator!.BoundNodeId}。";
+    }
+
+    // Coordinator/pack changes: the overlay is cleared whenever the bound node changes or disappears,
+    // and only plays while a node is actually active (and the target window is visible).
+    private void OnPackActiveChanged(object? sender, EventArgs args)
+    {
+        if (_disposed) return;
+        _overlay.ResetVisuals();
+        _overlay.PlaybackEnabled = Pack.Coordinator is { State: NodeBindingState.Active };
+        LocalStatus = Pack.Coordinator switch
         {
-            await _session.LoadAsync("mock-game", node.Id);
-            if (_disposed) return;
-            SetProperty(ref _selectedNode, node, nameof(SelectedNode));
-            _overlay.ResetVisuals();
-            LocalStatus = SavedCount == 0
-                ? "这个节点还没有弹幕。输入内容后发送，切回目标窗口即可看到。"
-                : $"已加载 {SavedCount} 条弹幕，将按保存的节点时间重播。";
-        }
-        catch (OperationCanceledException) when (_disposed)
-        {
-            // Closing cancels pending I/O; the window no longer needs a status update.
-        }
-        catch (Exception exception) when (IsLocalDataError(exception))
-        {
-            if (!_disposed) LocalStatus = $"加载失败：{exception.Message} 点击“重播 / 重新加载”重试。";
-        }
-        finally
-        {
-            if (!_disposed)
-            {
-                OnPropertyChanged(nameof(SelectedNode));
-                SetLocalBusy(false);
-                _overlay.PlaybackEnabled = _session.IsLoaded;
-            }
-        }
+            null => "未加载游戏包，弹幕不可用。",
+            { State: NodeBindingState.Active } when SavedCount == 0 => "这个节点还没有弹幕。输入内容后发送，切回目标窗口即可看到。",
+            { State: NodeBindingState.Active } => $"已加载 {SavedCount} 条弹幕，将按保存的节点时间重播。",
+            { State: NodeBindingState.Loading } => "正在加载当前节点的弹幕…",
+            { State: NodeBindingState.Failed } coordinator => $"节点弹幕加载失败：{coordinator.LastError} 点击“重播 / 重试当前节点”可重试。",
+            _ => "未确认剧情节点，弹幕已暂停。",
+        };
+        UpdateLocalState();
+        // The window line must not keep claiming playback after the node was lost (or keep denying it once one is active).
+        if (_lastSnapshot is { State: not (TargetState.Unbound or TargetState.Closed) } snapshot) Status = DescribeWindow(snapshot);
+    }
+
+    private void OnTextSourceChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (!_disposed && args.PropertyName == nameof(TextSourceViewModel.IsRunning)) OnPropertyChanged(nameof(CoordinatorText));
+    }
+
+    private void UpdateLocalState()
+    {
+        OnPropertyChanged(nameof(ActivePackText));
+        OnPropertyChanged(nameof(BoundNodeText));
+        OnPropertyChanged(nameof(CoordinatorText));
+        OnPropertyChanged(nameof(SavedCount));
+        OnPropertyChanged(nameof(NodeTime));
+        SendCommand.NotifyCanExecuteChanged();
+        ReplayCommand.NotifyCanExecuteChanged();
     }
 
     private async Task SendAsync()
@@ -263,15 +291,16 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        NodeBindingCoordinator coordinator = Pack.Coordinator!;
         string draft = DraftText;
         SetLocalBusy(true);
         LocalStatus = "正在保存弹幕…";
         try
         {
-            StoredDanmaku saved = await _session.SendAsync(draft, SelectedColor.Value, FontSize);
+            StoredDanmaku saved = await coordinator.SendAsync(draft, SelectedColor.Value, FontSize);
             if (_disposed) return;
             if (DraftText == draft) DraftText = "";
-            LocalStatus = $"已保存到{SelectedNode.Label} · {saved.OffsetMilliseconds / 1000.0:0.0} 秒。切回目标窗口播放。";
+            LocalStatus = $"已保存到节点 {saved.NodeId} · {saved.OffsetMilliseconds / 1000.0:0.0} 秒。切回目标窗口播放。";
         }
         catch (OperationCanceledException) when (_disposed)
         {
@@ -279,7 +308,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Exception exception) when (IsLocalDataError(exception))
         {
-            if (!_disposed) LocalStatus = $"发送失败：{exception.Message} 输入内容已保留。";
+            if (!_disposed) LocalStatus = $"发送失败：{DescribeLocalError(exception)} 输入内容已保留，可直接重试。";
         }
         finally
         {
@@ -291,12 +320,8 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
     {
         _localBusy = value;
         OnPropertyChanged(nameof(IsLocalIdle));
-        OnPropertyChanged(nameof(SavedCount));
-        OnPropertyChanged(nameof(NodeTime));
         InitializeCommand.NotifyCanExecuteChanged();
-        ReplayCommand.NotifyCanExecuteChanged();
-        SendCommand.NotifyCanExecuteChanged();
-        _switchNodeCommand.NotifyCanExecuteChanged();
+        UpdateLocalState();
     }
 
     private void OnNodeClockTick(object? sender, EventArgs args)
@@ -304,6 +329,16 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(NodeTime));
         Story.RefreshClock();
     }
+
+    // SQLITE_BUSY (5) / SQLITE_LOCKED (6) / SQLITE_CANTOPEN (14): the raw English driver text is not actionable.
+    private static string DescribeLocalError(Exception exception) => exception switch
+    {
+        SqliteException { SqliteErrorCode: 5 or 6 } => "本地数据库正被其他程序占用，请稍后重试。",
+        SqliteException { SqliteErrorCode: 14 } => "无法打开本地数据库文件，请检查磁盘空间与目录权限。",
+        SqliteException sqlite => $"本地数据库读写失败（{sqlite.Message}）。",
+        IOException or UnauthorizedAccessException => $"无法访问本地数据库文件（{exception.Message}）。",
+        _ => exception.Message,
+    };
 
     private static bool IsLocalDataError(Exception exception) => exception is
         SqliteException or IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException or FormatException or InvalidOperationException;
@@ -346,6 +381,7 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         catch (InvalidOperationException exception)
         {
             Unbind();
+            Refresh(); // The closed window must not stay selectable.
             Status = exception.Message;
         }
     }
@@ -354,18 +390,19 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void OnWindowChanged(object? sender, WindowSnapshot snapshot)
     {
+        _lastSnapshot = snapshot;
         IsBound = snapshot.State is not (TargetState.Unbound or TargetState.Closed);
         BoundTarget = IsBound ? $"{snapshot.Target!.ProcessName} · {snapshot.Target.Title}" : "未绑定窗口";
-        Status = snapshot.State switch
-        {
-            TargetState.Visible => "正在播放当前节点的本地弹幕 · 鼠标穿透已开启",
-            TargetState.NotForeground => "已绑定。切回目标窗口后自动播放。",
-            TargetState.Minimized => "目标已最小化，覆盖层已隐藏。",
-            TargetState.Hidden => "目标当前不可见，覆盖层已隐藏。",
-            TargetState.Unavailable => "暂时无法读取客户区，等待窗口恢复。",
-            TargetState.Closed => "目标窗口已关闭，已自动解除绑定。",
-            _ => "已解除绑定。选择窗口可重新开始。",
-        };
+        // A window that closed on its own must not stay selectable in the list.
+        if (snapshot.State == TargetState.Closed) Refresh();
+        Status = DescribeWindow(snapshot);
+        OnPropertyChanged(nameof(CoordinatorText));
+        OnPropertyChanged(nameof(NodeTime));
+
+        // A closed game window ends the story context: the old position must not carry over to the next run.
+        // A manual unbind keeps it: text reception is independent of the window, the game is still on the same
+        // line, and Luna will not resend it, so resetting here would leave the node unknown until the next line.
+        if (snapshot.State == TargetState.Closed) Story.Reset();
 
         if (snapshot.State != TargetState.Visible)
         {
@@ -384,9 +421,33 @@ public sealed class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    private string DescribeWindow(WindowSnapshot snapshot)
+    {
+        string text = snapshot.State switch
+        {
+            TargetState.Visible => Pack.Coordinator switch
+            {
+                null => "已绑定，目标在前台。未加载游戏包，暂无弹幕。",
+                { State: NodeBindingState.Active } => "正在播放当前节点的本地弹幕 · 鼠标穿透已开启",
+                { State: NodeBindingState.Loading } => "已绑定 · 正在加载当前节点的弹幕…",
+                { State: NodeBindingState.Failed } => "已绑定 · 节点弹幕加载失败，可点击“重播 / 重试当前节点”。",
+                _ => "已绑定，目标在前台。尚未确认剧情节点，弹幕已暂停。",
+            },
+            TargetState.NotForeground => "已绑定。切回目标窗口后自动播放。",
+            TargetState.Minimized => "目标已最小化，覆盖层已隐藏。",
+            TargetState.Hidden => "目标当前不可见，覆盖层已隐藏。",
+            TargetState.Unavailable => "暂时无法读取客户区，等待窗口恢复。",
+            TargetState.Closed => "目标窗口已关闭，已自动解除绑定。",
+            _ => "已解除绑定。选择窗口可重新开始。",
+        };
+        if (snapshot.State is not (TargetState.Closed or TargetState.Unbound) && snapshot.Target is { } target
+            && Pack.ActivePack is { } pack && pack.ProcessNames.Count > 0 && !pack.MatchesProcess(target.ProcessName))
+            text += $" 提示：该进程与游戏包「{pack.Name}」声明的进程不符。";
+        return text;
+    }
+
     private void UpdateSettings() => _overlay.Settings = new DanmakuSettings(FontSize, OpacityPercent / 100, Speed, SelectedArea.Fraction);
 }
 
 public sealed record DisplayArea(string Label, double Fraction);
-public sealed record MockNode(string Id, string Label);
 public sealed record CommentColor(string Label, string Value);

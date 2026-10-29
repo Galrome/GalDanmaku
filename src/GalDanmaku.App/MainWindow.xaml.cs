@@ -28,7 +28,20 @@ public partial class MainWindow : FluentWindow
         IsEnabled = false;
         // The original canceled Closing event must unwind even when disposal completes synchronously.
         await Task.Yield();
-        await _viewModel.DisposeAsync();
+        string? failure = null;
+        try
+        {
+            await _viewModel.DisposeAsync();
+        }
+        catch (Exception exception)
+        {
+            // A failing teardown must not leave a disabled window that can never close.
+            failure = $"{exception.GetType().Name}：{exception.Message}";
+        }
+
+        if (failure is not null)
+            System.Windows.MessageBox.Show($"关闭时清理资源出错：{failure}\n已提交的弹幕不受影响。", "GalDanmaku",
+                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
         _readyToClose = true;
         Close();
     }

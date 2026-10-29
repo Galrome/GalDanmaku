@@ -4,6 +4,7 @@ public sealed class LocalCommentSession : IDisposable
 {
     private readonly ICommentRepository _repository;
     private readonly CancellationTokenSource _lifetime = new();
+    private long _unloadVersion;
     private bool _disposed;
 
     public LocalCommentSession(ICommentRepository repository)
@@ -27,11 +28,17 @@ public sealed class LocalCommentSession : IDisposable
         StoredDanmaku.ValidateIdentity(nodeId, nameof(nodeId));
         Playback.IsPlaying = false;
         IsBusy = true;
+        long unloadVersion = _unloadVersion;
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, cancellationToken);
         try
         {
             IReadOnlyList<StoredDanmaku> comments = await _repository.LoadAsync(gameId, nodeId, cancellation.Token);
             cancellation.Token.ThrowIfCancellationRequested();
+            if (unloadVersion != _unloadVersion)
+            {
+                throw new OperationCanceledException("加载期间会话已卸载。", cancellation.Token);
+            }
+
             Playback.Load(gameId, nodeId, comments);
             GameId = gameId;
             NodeId = nodeId;
@@ -63,13 +70,35 @@ public sealed class LocalCommentSession : IDisposable
                 throw new OperationCanceledException("会话已关闭。", cancellation.Token);
             }
 
-            Playback.AddSaved(comment);
+            // The node may have been unloaded while saving; the comment is stored but must not join another timeline.
+            if (IsLoaded && GameId == comment.GameId && NodeId == comment.NodeId)
+            {
+                Playback.AddSaved(comment);
+            }
+
             return comment;
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    // Clears the loaded node so nothing can be sent or played until the next LoadAsync.
+    // Allowed while busy: an in-flight load is discarded and an in-flight save is stored without queuing.
+    // No-op after Dispose, which has already cleared the state.
+    public void Unload()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _unloadVersion++;
+        IsLoaded = false;
+        GameId = "";
+        NodeId = "";
+        Playback.Clear();
     }
 
     public void Dispose()

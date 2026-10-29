@@ -37,7 +37,7 @@
       <TextBox x:Name="LatestReceivedText" AutomationProperties.AutomationId="LatestReceivedText" AutomationProperties.Name="最新归一化原文"
                Text="{Binding LatestText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Height="82" VerticalScrollBarVisibility="Auto" />
       <TextBlock Margin="0,10,0,0" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                 Text="按相邻文本与时间间隔启发式识别：相同台词可能被过滤，前缀相似的独立台词可能合并。会话内编号不是剧情节点。原文接收独立于窗口前台状态，不切换下方模拟节点或弹幕时间线。" />
+                 Text="按相邻文本与时间间隔启发式识别：相同台词可能被过滤，前缀相似的独立台词可能合并。会话内编号不是剧情节点。原文接收独立于窗口前台状态；文本源配置与文本清理规则来自当前游戏包。" />
     </StackPanel>
   </Border>
 </UserControl>

@@ -7,8 +7,8 @@
       <TextBlock Text="剧情节点定位" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12" />
       <Grid>
         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-        <TextBox AutomationProperties.AutomationId="StoryIndexPath" AutomationProperties.Name="剧情索引路径" Text="{Binding IndexPath, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanLoad}" Margin="0,0,8,0" />
-        <ui:Button Grid.Column="1" Content="浏览…" Click="OnBrowseIndex" IsEnabled="{Binding CanLoad}" Margin="0,0,8,0" />
+        <TextBox AutomationProperties.AutomationId="StoryIndexPath" AutomationProperties.Name="剧情索引路径" Text="{Binding IndexPath, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanImport}" Margin="0,0,8,0" />
+        <ui:Button Grid.Column="1" Content="浏览…" Click="OnBrowseIndex" IsEnabled="{Binding CanImport}" Margin="0,0,8,0" />
         <ui:Button Grid.Column="2" AutomationProperties.AutomationId="LoadStoryIndexButton" Content="加载索引" Command="{Binding LoadCommand}" />
       </Grid>
       <TextBlock AutomationProperties.AutomationId="StoryIndexStatus" Text="{Binding IndexStatus}" TextWrapping="Wrap" Margin="0,8,0,10" />
@@ -35,7 +35,7 @@
           </WrapPanel>
         </StackPanel>
       </Expander>
-      <TextBlock Text="内置索引仅含虚构测试剧情。读档或跳转后请重置上下文；未知或有歧义时不提供绑定节点。计时从节点确认开始，当前不控制下方模拟弹幕。" TextWrapping="Wrap" FontSize="12" Margin="0,10,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+      <TextBlock Text="索引来自当前游戏包。读档或跳转后请重置上下文；未知或有歧义时弹幕立即暂停并解绑节点。无游戏包时手动加载的索引仅用于定位调试，不会绑定或发送弹幕。" TextWrapping="Wrap" FontSize="12" Margin="0,10,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
     </StackPanel>
   </Border>
 </UserControl>
