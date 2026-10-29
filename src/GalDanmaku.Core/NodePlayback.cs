@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using GalDanmaku.Core.Diagnostics;
+
 namespace GalDanmaku.Core;
 
 public sealed class NodePlayback
@@ -17,6 +20,11 @@ public sealed class NodePlayback
     private string _nodeId = "";
     private double _elapsedMilliseconds;
     private bool _aggregationEnabled;
+    private bool _isPlaying;
+    private long _queueFullDrops;
+    private long _pendingExpiredDrops;
+    private long _blockedEmissions;
+    private long _lastSchedulingLog = Stopwatch.GetTimestamp();
 
     // Switching presentation deliberately replays the node; saved records remain untouched.
     public bool AggregationEnabled
@@ -30,8 +38,20 @@ public sealed class NodePlayback
         }
     }
 
-    public bool IsPlaying { get; set; }
+    public bool IsPlaying
+    {
+        get => _isPlaying;
+        set
+        {
+            if (_isPlaying == value) return;
+            _isPlaying = value;
+            using var scope = RuntimeLog.BeginScope(new LogContext(GameId: _gameId, NodeId: _nodeId));
+            RuntimeLog.Write(LogLevel.Information, "Playback", value ? "PlaybackStarted" : "PlaybackPaused", new { offsetMs = OffsetMilliseconds });
+        }
+    }
     public long OffsetMilliseconds => (long)_elapsedMilliseconds;
+    public string GameId => _gameId;
+    public string NodeId => _nodeId;
     public int PendingCount => _pending.Count;
     public int SavedCount => _comments.Count;
     // Comments dropped as expired since the last Load/Replay/Clear; they stay saved and return on replay.
@@ -53,6 +73,7 @@ public sealed class NodePlayback
             throw new ArgumentException("弹幕不属于当前游戏与节点。", nameof(comments));
         }
 
+        LogSchedulingSummary(force: true);
         _gameId = gameId;
         _nodeId = nodeId;
         _comments.Clear();
@@ -64,10 +85,15 @@ public sealed class NodePlayback
         }
 
         Replay();
+        using var scope = RuntimeLog.BeginScope(new LogContext(GameId: _gameId, NodeId: _nodeId));
+        RuntimeLog.Write(LogLevel.Information, "Playback", "PlaybackLoaded", new { count = _comments.Count, displayCount = _displays.Count });
     }
 
     public void Clear()
     {
+        LogSchedulingSummary(force: true);
+        using var scope = RuntimeLog.BeginScope(new LogContext(GameId: _gameId, NodeId: _nodeId));
+        RuntimeLog.Write(LogLevel.Debug, "Playback", "PlaybackCleared", new { count = _comments.Count, pendingCount = _pending.Count, expiredCount = ExpiredCount });
         IsPlaying = false;
         _gameId = "";
         _nodeId = "";
@@ -108,6 +134,7 @@ public sealed class NodePlayback
             {
                 _emitted.Add(_scheduled.Dequeue().DisplayId);
                 ExpiredCount++;
+                _queueFullDrops++;
             }
             else
             {
@@ -130,12 +157,15 @@ public sealed class NodePlayback
             {
                 _emitted.Add(next.DisplayId);
                 ExpiredCount++;
+                _pendingExpiredDrops++;
             }
             else
             {
                 _pending.Enqueue((next, enqueued));
             }
+            _blockedEmissions++;
         }
+        LogSchedulingSummary();
     }
 
     public void AddSaved(StoredDanmaku comment)
@@ -173,6 +203,7 @@ public sealed class NodePlayback
 
     public void Replay()
     {
+        LogSchedulingSummary(force: true);
         _elapsedMilliseconds = 0;
         _pending.Clear();
         _scheduled.Clear();
@@ -189,6 +220,26 @@ public sealed class NodePlayback
 
         ResetVersion++;
         DisplayVersion++;
+        using var scope = RuntimeLog.BeginScope(new LogContext(GameId: _gameId, NodeId: _nodeId));
+        RuntimeLog.Write(LogLevel.Information, "Playback", "PlaybackReplayed", new { count = _comments.Count, displayCount = _displays.Count, aggregationEnabled = AggregationEnabled });
+    }
+
+    private void LogSchedulingSummary(bool force = false)
+    {
+        if (_queueFullDrops == 0 && _pendingExpiredDrops == 0 && _blockedEmissions == 0) return;
+        if (!force && Stopwatch.GetElapsedTime(_lastSchedulingLog).TotalSeconds < 5) return;
+        using var scope = RuntimeLog.BeginScope(new LogContext(GameId: _gameId, NodeId: _nodeId));
+        RuntimeLog.Write(LogLevel.Debug, "Playback", "SchedulingSummary", new
+        {
+            queueFullDrops = _queueFullDrops,
+            pendingExpiredDrops = _pendingExpiredDrops,
+            blockedEmissions = _blockedEmissions,
+            pendingCount = _pending.Count,
+            scheduledCount = _scheduled.Count,
+            offsetMs = OffsetMilliseconds,
+        });
+        _queueFullDrops = _pendingExpiredDrops = _blockedEmissions = 0;
+        _lastSchedulingLog = Stopwatch.GetTimestamp();
     }
 
     private void Schedule(DanmakuDisplay display, long offset) =>

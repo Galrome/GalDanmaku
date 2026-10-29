@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
 using GalDanmaku.Core;
+using GalDanmaku.Core.Diagnostics;
 
 namespace GalDanmaku.App.Overlay;
 
@@ -23,6 +24,8 @@ public sealed class OverlayRenderer : FrameworkElement, IDisposable
     private bool _playing;
     private bool _hasDrawnItems;
     private bool _disposed;
+    private long? _lastRenderError;
+    private long _suppressedRenderErrors;
     private DanmakuItem? _hoveredItem;
 
     public event EventHandler? FrameAdvanced;
@@ -74,6 +77,7 @@ public sealed class OverlayRenderer : FrameworkElement, IDisposable
         IsHitTestVisible = false;
         ClipToBounds = true;
         _outline.Freeze();
+        RuntimeLog.Write(LogLevel.Information, "Renderer", "RenderResourcesInitialized");
     }
 
     public DanmakuSettings Settings
@@ -101,6 +105,7 @@ public sealed class OverlayRenderer : FrameworkElement, IDisposable
         }
 
         _playing = true;
+        RuntimeLog.Write(LogLevel.Information, "Renderer", "PlaybackResumed", new { _playback.GameId, _playback.NodeId });
         _previousSeconds = 0;
         _clock.Restart();
         CompositionTarget.Rendering += OnFrame;
@@ -118,6 +123,7 @@ public sealed class OverlayRenderer : FrameworkElement, IDisposable
         CompositionTarget.Rendering -= OnFrame;
         _clock.Stop();
         _playing = false;
+        RuntimeLog.Write(LogLevel.Information, "Renderer", "PlaybackPaused", new { _playback.GameId, _playback.NodeId });
         // Retain active visuals and pending comments across foreground changes.
     }
 
@@ -142,9 +148,16 @@ public sealed class OverlayRenderer : FrameworkElement, IDisposable
         _engine.Clear();
         _textCache.Clear();
         _disposed = true;
+        RuntimeLog.Write(LogLevel.Information, "Renderer", "RendererDisposed");
     }
 
     protected override void OnRender(DrawingContext drawingContext)
+    {
+        try { RenderContents(drawingContext); }
+        catch (Exception exception) { LogRenderFailure("RenderFailed", exception); throw; }
+    }
+
+    private void RenderContents(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
         ConfigureEngine();
@@ -166,6 +179,24 @@ public sealed class OverlayRenderer : FrameworkElement, IDisposable
     }
 
     private void OnFrame(object? sender, EventArgs args)
+    {
+        try { AdvanceFrame(); }
+        catch (Exception exception) { LogRenderFailure("RenderFrameFailed", exception); throw; }
+    }
+
+    private void LogRenderFailure(string eventName, Exception exception)
+    {
+        if (_lastRenderError is { } last && Stopwatch.GetElapsedTime(last).TotalSeconds < 5)
+        {
+            _suppressedRenderErrors++;
+            return;
+        }
+        RuntimeLog.Write(LogLevel.Error, "Renderer", eventName, new { suppressedSinceLast = _suppressedRenderErrors }, exception);
+        _lastRenderError = Stopwatch.GetTimestamp();
+        _suppressedRenderErrors = 0;
+    }
+
+    private void AdvanceFrame()
     {
         ResetIfNeeded();
         RefreshDisplays();

@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using GalDanmaku.Core.Diagnostics;
+
 namespace GalDanmaku.Core;
 
 // Owned by the UI thread. Repository work is serialized across selections, including cancellation:
@@ -19,7 +22,11 @@ public sealed class LocalLikeController(ILocalLikeRepository repository) : IAsyn
 
     public Task SelectAsync(StoredDanmaku? comment)
     {
-        if (_disposed) return Task.CompletedTask;
+        if (_disposed)
+        {
+            RuntimeLog.Write(LogLevel.Debug, "LocalLike", "LikeSelectionSkipped", new { reason = "Disposed" });
+            return Task.CompletedTask;
+        }
         long generation = ++_generation;
         CancelSelection();
         Selection = comment;
@@ -60,8 +67,16 @@ public sealed class LocalLikeController(ILocalLikeRepository repository) : IAsyn
 
     private async Task RunAsync(Task previous, StoredDanmaku comment, long generation, CancellationToken token, bool? desired)
     {
+        using var scope = RuntimeLog.BeginScope(new LogContext(GameId: comment.GameId, NodeId: comment.NodeId, OperationId: Guid.NewGuid().ToString("N")));
+        string operation = desired is null ? "LikeQuery" : desired.Value ? "Like" : "Unlike";
         await previous;
-        if (!IsCurrent(generation) || token.IsCancellationRequested) return;
+        if (!IsCurrent(generation) || token.IsCancellationRequested)
+        {
+            RuntimeLog.Write(LogLevel.Debug, "LocalLike", operation + "Skipped", new { commentId = comment.Id, reason = token.IsCancellationRequested ? "Cancelled" : "Superseded" });
+            return;
+        }
+        long started = Stopwatch.GetTimestamp();
+        RuntimeLog.Write(LogLevel.Debug, "LocalLike", operation + "Started", new { commentId = comment.Id });
         try
         {
             bool liked;
@@ -75,10 +90,17 @@ public sealed class LocalLikeController(ILocalLikeRepository repository) : IAsyn
                 liked = await repository.GetLocalLikedAsync(comment.GameId, comment.NodeId, comment.Id, token);
             }
             if (IsCurrent(generation)) IsLiked = liked;
+            RuntimeLog.Write(LogLevel.Information, "LocalLike", operation + "Succeeded", new { commentId = comment.Id, liked, current = IsCurrent(generation), durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds });
         }
-        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception)
+        catch (OperationCanceledException exception) when (token.IsCancellationRequested)
         {
+            RuntimeLog.Write(LogLevel.Debug, "LocalLike", operation + "Cancelled", new { commentId = comment.Id, durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds }, exception);
+        }
+        catch (Exception exception)
+        {
+            RuntimeLog.Write(exception is OperationCanceledException ? LogLevel.Debug : LogLevel.Error, "LocalLike",
+                operation + (exception is OperationCanceledException ? "Cancelled" : "Failed"),
+                new { commentId = comment.Id, current = IsCurrent(generation), durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds }, exception);
             if (IsCurrent(generation)) Error = desired.HasValue ? "保存本地点赞失败，请点击重试。" : "读取本地点赞失败，请点击重试。";
         }
         finally

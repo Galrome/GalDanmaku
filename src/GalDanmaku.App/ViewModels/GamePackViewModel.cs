@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using GalDanmaku.Core;
 using GalDanmaku.Core.GamePacks;
+using GalDanmaku.Core.Diagnostics;
 
 namespace GalDanmaku.App.ViewModels;
 
@@ -103,6 +104,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
             {
                 if (_disposed) return;
                 IReadOnlyList<GamePackEntry> entries = await GamePackCatalog.DiscoverAsync(root, token);
+                RuntimeLog.Write(LogLevel.Information, "GamePack", "GamePackCatalogScanned", new { root, count = entries.Count, invalidCount = entries.Count(entry => entry.Error is not null) });
                 foreach (GamePackEntry entry in entries)
                     if (seen.Add(entry.Directory)) items.Add(new GamePackItem(entry));
             }
@@ -118,10 +120,12 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         }
         catch (OperationCanceledException) when (_disposed)
         {
+            RuntimeLog.Write(LogLevel.Debug, "GamePack", "GamePackScanCancelled", new { reason = "ApplicationClosing" });
             // Shutdown cancels discovery.
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
+            RuntimeLog.Write(LogLevel.Error, "GamePack", "GamePackScanFailed", exception: exception);
             if (!_disposed && generation == _refreshGeneration && !_windowBound) Status = $"扫描游戏包失败：{exception.Message}";
         }
         finally
@@ -141,6 +145,8 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         _windowBound = true;
+        RuntimeLog.SetGameId(null);
+        RuntimeLog.Write(LogLevel.Information, "GamePack", "GameRecognitionStarted", new { executablePath, identityError });
         _requiredGameId = null;
         _identitySummary = "正在识别游戏";
         (long generation, CancellationTokenSource cancellation) = BeginChange("正在识别游戏并匹配剧情包…");
@@ -151,6 +157,8 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     {
         if (_disposed) return Task.CompletedTask;
         _windowBound = false;
+        RuntimeLog.Write(LogLevel.Information, "GamePack", "GameContextCleared", new { reason = "WindowUnboundOrClosed" });
+        RuntimeLog.SetGameId(null);
         _requiredGameId = null;
         _identitySummary = "";
         (long generation, CancellationTokenSource cancellation) = BeginChange("已解除窗口绑定，未加载剧情包。");
@@ -161,6 +169,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     {
         long generation = ++_generation;
         _loadCancellation?.Cancel();
+        if (_isLoading) RuntimeLog.Write(LogLevel.Debug, "GamePack", "GamePackRequestSuperseded", new { generation, reason });
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         _loadCancellation = cancellation;
         Deactivate(reason);
@@ -178,6 +187,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
 
     private async Task BindWindowCoreAsync(string? executablePath, string? identityError, long generation, CancellationTokenSource cancellation)
     {
+        using var operation = RuntimeLog.BeginScope(new LogContext(OperationId: Guid.NewGuid().ToString("N")));
         try
         {
             await _textSource.StopAsync();
@@ -194,6 +204,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
             }
             if (match.Game is not { } game)
             {
+                RuntimeLog.Write(LogLevel.Warning, "GamePack", "GameRecognitionUncertain", new { status = match.Status.ToString(), match.Reason });
                 _identitySummary = match.Status == LocalGameMatchStatus.Ambiguous ? "游戏识别存在歧义" : "未识别游戏";
                 UseUnindexedLuna(match.Reason);
                 return;
@@ -201,6 +212,9 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
 
             _identitySummary = $"已识别：{game.DisplayName} · {game.Id}";
             _requiredGameId = game.RequiredGamePackId;
+            RuntimeLog.SetGameId(game.Id);
+            using var recognizedGame = RuntimeLog.BeginScope(new LogContext(GameId: game.Id));
+            RuntimeLog.Write(LogLevel.Information, "GamePack", "GameRecognized", new { game.Id, game.DisplayName, requiredGamePackId = _requiredGameId });
             LoadCommand.NotifyCanExecuteChanged();
             var candidates = new List<GamePackEntry>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -208,11 +222,15 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
             {
                 IReadOnlyList<GamePackEntry> entries = await GamePackCatalog.DiscoverAsync(root, cancellation.Token);
                 if (IsStale(generation)) return;
+                RuntimeLog.Write(LogLevel.Debug, "GamePack", "GamePackCandidatesScanned", new { root, count = entries.Count,
+                    invalid = entries.Where(entry => entry.Error is not null).Select(entry => new { entry.Directory, entry.Error }).ToArray() });
                 candidates.AddRange(entries.Where(entry => seen.Add(entry.Directory)
                     && entry.Error is null && string.Equals(entry.GameId, _requiredGameId, StringComparison.Ordinal)));
             }
             if (candidates.Count != 1)
             {
+                RuntimeLog.Write(LogLevel.Warning, "GamePack", candidates.Count == 0 ? "GamePackMissing" : "GamePackAmbiguous",
+                    new { requiredGameId = _requiredGameId, candidateCount = candidates.Count, reason = candidates.Count == 0 ? "NoValidPackForGameId" : "MultiplePacksForGameId" });
                 UseUnindexedLuna(candidates.Count == 0 ? $"{_identitySummary}；无可用剧情包。"
                     : $"{_identitySummary}；同一 GameId 存在多个剧情包，未自动选择。");
                 return;
@@ -220,9 +238,13 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
 
             await LoadCoreAsync(candidates[0].Directory, generation, cancellation, _requiredGameId, ownsCancellation: false);
         }
-        catch (OperationCanceledException) when (IsStale(generation)) { /* A newer binding owns the state. */ }
+        catch (OperationCanceledException) when (IsStale(generation))
+        {
+            RuntimeLog.Write(LogLevel.Debug, "GamePack", "GameRecognitionCancelled", new { generation, reason = _disposed ? "ApplicationClosing" : "Superseded" });
+        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException)
         {
+            RuntimeLog.Write(LogLevel.Error, "GamePack", "GameRecognitionFailed", new { generation, stale = IsStale(generation) }, exception);
             if (!IsStale(generation))
             {
                 if (_requiredGameId is null) _identitySummary = "未识别游戏";
@@ -266,6 +288,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         if (_windowBound && (_requiredGameId is null || !Packs.Any(item => item.IsSelectable && CanLoadItem(item)
             && string.Equals(item.Directory, directory, StringComparison.OrdinalIgnoreCase))))
         {
+            RuntimeLog.Write(LogLevel.Warning, "GamePack", "GamePackLoadRejected", new { directory, requiredGameId = _requiredGameId, reason = "BoundGameIdentityMismatch" });
             Status = "已绑定窗口时只能加载已识别游戏对应的剧情包；解除绑定后可使用演示包。";
             return Task.CompletedTask;
         }
@@ -276,6 +299,8 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     private async Task LoadCoreAsync(string directory, long generation, CancellationTokenSource cancellation,
         string? requiredGameId = null, bool ownsCancellation = true)
     {
+        using var operation = RuntimeLog.BeginScope(new LogContext(OperationId: Guid.NewGuid().ToString("N")));
+        RuntimeLog.Write(LogLevel.Information, "GamePack", "GamePackLoadStarted", new { directory, requiredGameId, generation });
         try
         {
             await _textSource.StopAsync();
@@ -303,10 +328,12 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         }
         catch (OperationCanceledException) when (IsStale(generation))
         {
+            RuntimeLog.Write(LogLevel.Information, "GamePack", "GamePackLoadCancelled", new { generation, reason = _disposed ? "ApplicationClosing" : "Superseded" });
             // Superseded or shutting down: the newer request owns the state now.
         }
         catch (Exception exception)
         {
+            RuntimeLog.Write(LogLevel.Error, "GamePack", "GamePackLoadFailed", new { directory, generation, stale = IsStale(generation) }, exception);
             // Reported, never swallowed: the app stays in the "no active pack" state set by Deactivate.
             if (!IsStale(generation))
             {
@@ -326,6 +353,8 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     private void Activate(LoadedGamePack loaded)
     {
         GamePack pack = loaded.Pack;
+        if (!_windowBound) RuntimeLog.SetGameId(pack.GameId);
+        RuntimeLog.Write(LogLevel.Information, "GamePack", "GamePackLoaded", new { pack.GameId, pack.Name, pack.Version, pack.Directory, nodeCount = loaded.Index.Nodes.Count });
         _activePack = pack;
         _coordinator = new NodeBindingCoordinator(_session, pack.GameId);
         _coordinator.StateChanged += OnCoordinatorStateChanged;
@@ -341,6 +370,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     // Synchronous part of the teardown: nothing of the old pack can bind, send or play after this returns.
     private void Deactivate(string reason)
     {
+        RuntimeLog.Write(LogLevel.Debug, "GamePack", "GamePackDeactivated", new { previousGameId = _activePack?.GameId, reason });
         if (_coordinator is { } coordinator)
         {
             coordinator.StateChanged -= OnCoordinatorStateChanged;

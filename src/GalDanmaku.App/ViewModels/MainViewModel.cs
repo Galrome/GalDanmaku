@@ -9,6 +9,7 @@ using GalDanmaku.App.Overlay;
 using GalDanmaku.App.Windows;
 using GalDanmaku.Core;
 using GalDanmaku.Core.GamePacks;
+using GalDanmaku.Core.Diagnostics;
 using GalDanmaku.Core.Text;
 using GalDanmaku.Storage;
 using Microsoft.Data.Sqlite;
@@ -39,9 +40,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         TextSourceOptions textOptions = new();
         string configNotice = "界面修改仅本次运行有效；启动默认值读取程序目录的 text-source.json。";
-        try { textOptions = TextSourceOptions.Load(Path.Combine(AppContext.BaseDirectory, "text-source.json")); }
+        try
+        {
+            textOptions = TextSourceOptions.Load(Path.Combine(AppContext.BaseDirectory, "text-source.json"));
+            RuntimeLog.Write(LogLevel.Information, "Main", "TextConfigurationLoaded", new { endpoint = RuntimeLog.SafeEndpoint(textOptions.Endpoint) });
+        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
-        { configNotice = "text-source.json 读取或校验失败，已使用内置默认值；原文件未改动。可在此调整设置后开始。"; }
+        {
+            RuntimeLog.Write(LogLevel.Warning, "Main", "TextConfigurationFailed", new { fallbackToDefaults = true }, exception);
+            configNotice = "text-source.json 读取或校验失败，已使用内置默认值；原文件未改动。可在此调整设置后开始。";
+        }
         Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
         TextSource = new TextSourceViewModel(textOptions, (action, token) => dispatcher.InvokeAsync(action, DispatcherPriority.Background, token).Task)
         { ConfigurationNotice = configNotice };
@@ -202,6 +210,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _disposed = true;
+        RuntimeLog.Write(LogLevel.Information, "Main", "MainDisposing");
         _nodeClock.Stop();
         _nodeClock.Tick -= OnNodeClockTick;
         // Stop polling the target first so nothing repositions or unbinds while the rest is torn down.
@@ -222,6 +231,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _session.Dispose();
         if (SendCommand.ExecutionTask is { } sending) await Task.WhenAny(sending);
         _overlay.Close();
+        RuntimeLog.Write(LogLevel.Information, "Main", "MainDisposed");
     }
 
     private async Task InitializeAsync()
@@ -290,6 +300,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         if (!CanSend)
         {
+            RuntimeLog.Write(LogLevel.Debug, "Main", "CommentSendSkipped", new { reason = "CannotSend", IsLocalIdle, hasCoordinator = Pack.Coordinator is not null });
             return;
         }
 
@@ -310,10 +321,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (OperationCanceledException) when (_disposed)
         {
+            RuntimeLog.Write(LogLevel.Information, "Main", "CommentSendCancelled", new { reason = "ApplicationClosing" });
             // The repository rolls back before commit; committed entries reload on the next launch.
         }
         catch (Exception exception) when (IsLocalDataError(exception))
         {
+            RuntimeLog.Write(LogLevel.Error, "Main", "CommentSendFailed", exception: exception);
             if (!_disposed) LocalStatus = $"发送失败：{DescribeLocalError(exception)} 输入内容已保留，可直接重试。";
         }
         finally
@@ -357,6 +370,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             WindowTarget? selected = SelectedWindow;
             IReadOnlyList<WindowTarget> windows = WindowCatalog.Enumerate();
+            RuntimeLog.Write(LogLevel.Information, "Window", "WindowCatalogRefreshed", new { count = windows.Count });
             Windows.Clear();
             foreach (WindowTarget window in windows)
             {
@@ -372,6 +386,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Win32Exception exception)
         {
+            RuntimeLog.Write(LogLevel.Error, "Window", "WindowEnumerationFailed", exception: exception);
             Status = exception.Message;
         }
     }
@@ -385,6 +400,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         try
         {
+            RuntimeLog.Write(LogLevel.Information, "Window", "WindowSelected", new { hwnd = $"0x{target.Handle:X}", pid = target.ProcessId, threadId = target.ThreadId, target.ProcessName });
             target = WindowCatalog.ReadProcessIdentity(target);
             Task matching = Pack.BindWindowAsync(target.ExecutablePath, target.ProcessIdentityError);
             _tracker.Bind(target);
@@ -392,6 +408,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (InvalidOperationException exception)
         {
+            RuntimeLog.Write(LogLevel.Warning, "Window", "WindowBindingFailed", new { hwnd = $"0x{target.Handle:X}", pid = target.ProcessId }, exception);
             Unbind();
             Refresh(); // The closed window must not stay selectable.
             Status = exception.Message;
@@ -400,6 +417,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void Unbind()
     {
+        RuntimeLog.Write(LogLevel.Information, "Window", "WindowUnbindRequested", new { reason = "UserOrBindingFailure" });
         _ = Pack.ClearWindowBindingAsync();
         _tracker.Unbind();
     }
@@ -412,6 +430,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void OnWindowChanged(object? sender, WindowSnapshot snapshot)
     {
+        // Geometry also changes this record; persist only semantic state transitions, never the 50 ms poll.
+        if (_lastSnapshot?.State != snapshot.State || _lastSnapshot?.Target?.Handle != snapshot.Target?.Handle)
+            RuntimeLog.Write(LogLevel.Information, "Window", snapshot.State == TargetState.Closed ? "WindowTargetLost" : "WindowStateChanged",
+                new { previous = _lastSnapshot?.State.ToString(), state = snapshot.State.ToString(), hwnd = snapshot.Target is { } t ? $"0x{t.Handle:X}" : null,
+                    pid = snapshot.Target?.ProcessId, snapshot.Bounds });
         _lastSnapshot = snapshot;
         WindowSnapshotChanged?.Invoke(this, snapshot);
         IsBound = snapshot.State is not (TargetState.Unbound or TargetState.Closed);
@@ -437,6 +460,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Win32Exception exception)
         {
+            RuntimeLog.Write(LogLevel.Error, "Overlay", "OverlayFollowFailed", exception: exception);
             Unbind();
             Status = $"覆盖层已停止：{exception.Message}";
         }
@@ -451,6 +475,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         catch (Win32Exception exception)
         {
+            RuntimeLog.Write(LogLevel.Error, "Overlay", "OverlayLayerFailed", exception: exception);
             Unbind();
             Status = $"覆盖层已停止：{exception.Message}";
         }

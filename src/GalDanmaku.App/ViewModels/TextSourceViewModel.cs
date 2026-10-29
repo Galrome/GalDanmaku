@@ -2,6 +2,7 @@ using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using GalDanmaku.Core.GamePacks;
+using GalDanmaku.Core.Diagnostics;
 using GalDanmaku.Core.Text;
 
 namespace GalDanmaku.App.ViewModels;
@@ -14,6 +15,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     private CancellationTokenSource? _cancellation;
     private Task _runTask = Task.CompletedTask;
     private bool _disposed;
+    private Guid? _activeSessionId;
     private bool _isAvailable = true;
     private bool _rawOnly;
     private IReadOnlyList<string>? _mockScript;
@@ -79,11 +81,14 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_disposed) { await _runTask; return; }
+        using var scope = RuntimeLog.BeginScope(new LogContext(TextSessionId: _activeSessionId?.ToString()));
+        RuntimeLog.Write(LogLevel.Information, "TextSource", "DisposeRequested", new { isRunning = _isRunning });
         _disposed = true;
         ContextInvalidated?.Invoke(this, EventArgs.Empty);
         _cancellation?.Cancel();
         UpdateCommands();
         await _runTask;
+        RuntimeLog.Write(LogLevel.Information, "TextSource", "Disposed");
     }
 
     // Applies a loaded game pack's declarative text-source settings. Only valid while stopped.
@@ -104,6 +109,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
         _mockScript = config.MockScript;
         _cleaner = cleaner;
         _isAvailable = true;
+        RuntimeLog.Write(LogLevel.Information, "TextSource", "ConfigurationApplied", new { source = _selectedSource.IsMock ? "Mock" : "Luna", endpoint = RuntimeLog.SafeEndpoint(options.Endpoint), rawOnly = _rawOnly, cleanerApplied = true });
         ClearCounters();
         foreach (string name in new[] { nameof(Endpoint), nameof(InitialRetry), nameof(MaximumRetry), nameof(ConnectTimeout), nameof(MergeGap), nameof(SelectedSource) })
             OnPropertyChanged(name);
@@ -115,6 +121,7 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     public void SetUnavailable(string reason)
     {
         ArgumentNullException.ThrowIfNull(reason);
+        RuntimeLog.Write(LogLevel.Information, "TextSource", "SourceUnavailable", new { reason = "ConfigurationUnavailable" });
         _isAvailable = false;
         _mockScript = null;
         _cleaner = null;
@@ -140,9 +147,14 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
 
     private Task StartAsync()
     {
-        if (!CanEdit) return Task.CompletedTask;
+        if (!CanEdit)
+        {
+            RuntimeLog.Write(LogLevel.Debug, "TextSource", "StartSkipped", new { reason = _disposed ? "Disposed" : _isRunning ? "AlreadyRunning" : "Unavailable" });
+            return Task.CompletedTask;
+        }
         if (_rawOnly && SelectedSource.IsMock)
         {
+            RuntimeLog.Write(LogLevel.Warning, "TextSource", "StartSkipped", new { reason = "MockSourceDisallowed" });
             Status = "已绑定窗口时只能接收 Luna 原文，不能启动模拟文本源。";
             return Task.CompletedTask;
         }
@@ -159,7 +171,12 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
             };
             options.Validate();
         }
-        catch (ArgumentException exception) { Status = $"配置无效：{exception.Message}"; return Task.CompletedTask; }
+        catch (ArgumentException exception)
+        {
+            RuntimeLog.Write(LogLevel.Warning, "TextSource", "ConfigurationRejected", new { source = SelectedSource.IsMock ? "Mock" : "Luna", endpoint = RuntimeLog.SafeEndpoint(Endpoint) }, exception);
+            Status = $"配置无效：{exception.Message}";
+            return Task.CompletedTask;
+        }
 
         ClearCounters();
         Status = "正在启动文本源…";
@@ -175,17 +192,30 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     private async Task RunAsync(TextSourceOptions options, bool mock, Func<string, string>? cleaner, CancellationTokenSource owner)
     {
         var processor = new DialogueProcessor(TimeSpan.FromMilliseconds(options.MergeGapMilliseconds));
+        _activeSessionId = processor.SessionId;
+        using var sessionScope = RuntimeLog.BeginScope(new LogContext(TextSessionId: processor.SessionId.ToString()));
+        long rawSequence = 0;
+        string sourceName = mock ? "Mock" : "Luna";
+        RuntimeLog.Write(LogLevel.Information, "TextSource", "SourceStarted", new { source = sourceName, endpoint = mock ? null : RuntimeLog.SafeEndpoint(options.Endpoint), mergeGapMilliseconds = options.MergeGapMilliseconds });
         // Set on disconnect: the story locator is reset then, so the first repeated frame must be re-published.
         bool reacquire = false;
+        string endReason = "Completed";
         try
         {
             ITextSource source = _sourceFactory(mock, options);
             await source.RunAsync((item, token) => new ValueTask(_dispatch(() =>
             {
+                // Dispatcher execution must explicitly restore this run's context before raising synchronous events.
+                using var dispatchScope = RuntimeLog.BeginScope(new LogContext(TextSessionId: processor.SessionId.ToString()));
                 // A canceled dispatcher work item may already be queued; never apply it to a stopped/restarted session.
-                if (_disposed || owner.IsCancellationRequested || !ReferenceEquals(owner, _cancellation)) return;
+                if (_disposed || owner.IsCancellationRequested || !ReferenceEquals(owner, _cancellation))
+                {
+                    RuntimeLog.Write(LogLevel.Debug, "TextSource", "CallbackSkipped", new { reason = _disposed ? "Disposed" : owner.IsCancellationRequested ? "Cancelled" : "SupersededSession" });
+                    return;
+                }
                 if (item is TextConnectionChanged connection)
                 {
+                    RuntimeLog.Write(LogLevel.Debug, "TextSource", "ConnectionStateChanged", new { source = sourceName, state = connection.State.ToString() });
                     if (connection.State == TextConnectionState.Retrying)
                     {
                         processor.OnDisconnected();
@@ -197,12 +227,31 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
                 else if (item is TextFrame frame)
                 {
                     RawCount++;
-                    TextProcessResult result = processor.Process(cleaner is null ? frame.Text : cleaner(frame.Text), frame.ReceivedAt);
+                    long frameSequence = ++rawSequence;
+                    using var frameScope = RuntimeLog.BeginScope(new LogContext(Sequence: frameSequence));
+                    RuntimeLog.Write(LogLevel.Debug, "TextSource", "RawReceived", new { rawSequence = frameSequence, sequenceKind = "RawFrame", receivedAt = frame.ReceivedAt, source = sourceName, length = frame.Text?.Length, raw = RuntimeLog.Text(frame.Text) });
+                    string cleaned;
+                    // TextFrame's contract is non-null; nullable length diagnostics must not alter processing semantics.
+                    try { cleaned = cleaner is null ? frame.Text! : cleaner(frame.Text!); }
+                    catch (Exception exception)
+                    {
+                        RuntimeLog.Write(LogLevel.Error, "TextSource", "CleaningFailed", new { rawSequence = frameSequence, source = sourceName, length = frame.Text?.Length }, exception);
+                        throw;
+                    }
+                    RuntimeLog.Write(LogLevel.Debug, "TextSource", "TextCleaned", new { rawSequence = frameSequence, length = cleaned?.Length, cleanerApplied = cleaner is not null, cleaned = RuntimeLog.Text(cleaned) });
+                    TextProcessResult result = processor.Process(cleaned!, frame.ReceivedAt);
                     DialogueEvent? published = result.Event;
                     if (published is null && reacquire && result.FilterReason == TextFilterReason.Duplicate)
                         published = processor.Reacquire(frame.ReceivedAt);
                     if (result.FilterReason is not (TextFilterReason.Empty or TextFilterReason.Invalid)) reacquire = false;
-                    if (published is not { } dialogue) { FilteredCount++; return; }
+                    if (published is not { } dialogue)
+                    {
+                        FilteredCount++;
+                        RuntimeLog.Write(LogLevel.Debug, "TextSource", "FrameFiltered", new { rawSequence = frameSequence, reason = result.FilterReason.ToString(), reacquirePending = reacquire });
+                        return;
+                    }
+                    using var dialogueScope = RuntimeLog.BeginScope(new LogContext(TextSessionId: dialogue.SessionId.ToString(), DialogueId: dialogue.DialogueId, Sequence: dialogue.Sequence));
+                    RuntimeLog.Write(LogLevel.Debug, "TextSource", "DialoguePublished", new { rawSequence = frameSequence, eventSequence = dialogue.Sequence, sequenceKind = "DialogueEvent", kind = dialogue.Kind.ToString(), receivedAt = dialogue.ReceivedAt, source = sourceName, length = dialogue.Text.Length, normalized = RuntimeLog.Text(dialogue.Text) });
                     if (dialogue.Kind == DialogueEventKind.NewDialogue) NewCount++; else UpdateCount++;
                     LatestText = dialogue.Text;
                     DialogueReceived?.Invoke(this, dialogue);
@@ -210,21 +259,30 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
                 }
             }, token)), owner.Token);
         }
-        catch (OperationCanceledException) when (owner.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (owner.IsCancellationRequested)
         {
+            endReason = "Cancelled";
+            RuntimeLog.Write(LogLevel.Information, "TextSource", "SourceCancelled", new { source = sourceName, rawCount = rawSequence }, exception);
             // Start/Stop and window shutdown share this awaited cancellation path.
         }
         catch (Exception exception)
         {
+            endReason = "Failure";
+            RuntimeLog.Write(LogLevel.Error, "TextSource", "SourceFailed", new { source = sourceName, rawCount = rawSequence }, exception);
             if (!_disposed) Status = $"文本源失败（{exception.GetType().Name}），请检查配置后重新开始。";
         }
         finally
         {
+            RuntimeLog.Write(LogLevel.Information, "TextSource", "SourceEnded", new { source = sourceName, reason = endReason, rawCount = rawSequence, newCount = NewCount, updateCount = UpdateCount, filteredCount = FilteredCount });
             if (!_disposed) ContextInvalidated?.Invoke(this, EventArgs.Empty);
             if (!_disposed && owner.IsCancellationRequested) Status = "已停止接收。再次开始会重置本次计数。";
             _isRunning = false;
             _isStopping = false;
-            if (ReferenceEquals(owner, _cancellation)) _cancellation = null;
+            if (ReferenceEquals(owner, _cancellation))
+            {
+                _cancellation = null;
+                _activeSessionId = null;
+            }
             owner.Dispose();
             if (!_disposed) UpdateCommands();
         }
@@ -233,6 +291,8 @@ public sealed class TextSourceViewModel : ObservableObject, IAsyncDisposable
     // Safe to call when nothing is running; completes once the run task has ended.
     public async Task StopAsync()
     {
+        using var scope = RuntimeLog.BeginScope(new LogContext(TextSessionId: _activeSessionId?.ToString()));
+        RuntimeLog.Write(LogLevel.Information, "TextSource", "StopRequested", new { isRunning = _isRunning });
         if (_cancellation is null) { await _runTask; return; }
         _isStopping = true;
         ContextInvalidated?.Invoke(this, EventArgs.Empty);

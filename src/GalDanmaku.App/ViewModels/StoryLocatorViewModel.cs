@@ -2,6 +2,7 @@ using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using GalDanmaku.Core.Story;
+using GalDanmaku.Core.Diagnostics;
 using GalDanmaku.Core.Text;
 
 namespace GalDanmaku.App.ViewModels;
@@ -116,6 +117,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(index);
         if (_disposed) return;
         _indexGeneration++;
+        RuntimeLog.Write(LogLevel.Information, "StoryLocatorViewModel", "StoryIndexInstalled", new { gameId = index.GameId, nodeCount = index.Nodes.Count, drivesBinding = true, liveMode });
         _index = index;
         _locator = new StoryLocator(index, _timeProvider);
         _drivesBinding = true;
@@ -132,6 +134,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(status);
         if (_disposed) return;
+        RuntimeLog.Write(LogLevel.Information, "StoryLocatorViewModel", "StoryIndexUnavailable", new { reason = "IndexCleared", previousGameId = _index?.GameId, previousHistoryCount = HistoryCount });
         _indexGeneration++;
         _index = null;
         _locator = null;
@@ -148,6 +151,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
+        RuntimeLog.Write(LogLevel.Information, "StoryLocatorViewModel", "DisposeRequested", new { historyCount = HistoryCount });
         _disposed = true;
         _source.DialogueReceived -= OnDialogueReceived;
         _source.ContextInvalidated -= OnContextInvalidated;
@@ -160,7 +164,11 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
 
     private async Task LoadAsync()
     {
-        if (!CanImport) return;
+        if (!CanImport)
+        {
+            RuntimeLog.Write(LogLevel.Debug, "StoryLocatorViewModel", "IndexImportSkipped", new { reason = _disposed ? "Disposed" : _packActive ? "GamePackActive" : "AlreadyLoading" });
+            return;
+        }
         string path = IndexPath.Trim();
         _loading = true;
         long generation = ++_indexGeneration;
@@ -172,22 +180,30 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
         _locator = null;
         _drivesBinding = false;
         Reset();
+        RuntimeLog.Write(LogLevel.Information, "StoryLocatorViewModel", "IndexImportStarted", new { generation });
         IndexStatus = "正在读取剧情索引…";
         try
         {
             StoryIndex index = await _loader(path, import.Token);
             // A game pack (or a newer import) may have installed its own index meanwhile; never overwrite it.
-            if (_disposed || generation != _indexGeneration) return;
+            if (_disposed || generation != _indexGeneration)
+            {
+                RuntimeLog.Write(LogLevel.Debug, "StoryLocatorViewModel", "IndexImportDiscarded", new { reason = _disposed ? "Disposed" : "SupersededGeneration", generation, currentGeneration = _indexGeneration });
+                return;
+            }
+            RuntimeLog.Write(LogLevel.Information, "StoryLocatorViewModel", "StoryIndexInstalled", new { gameId = index.GameId, nodeCount = index.Nodes.Count, drivesBinding = false, generation });
             _index = index;
             _locator = new StoryLocator(index, _timeProvider);
             IndexStatus = $"{index.GameId} · {index.Nodes.Count} 个固定节点 · 已加载（仅定位调试，不绑定弹幕）";
         }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested || generation != _indexGeneration)
+        catch (OperationCanceledException exception) when (_lifetime.IsCancellationRequested || generation != _indexGeneration)
         {
+            RuntimeLog.Write(LogLevel.Information, "StoryLocatorViewModel", "IndexImportCancelled", new { reason = _lifetime.IsCancellationRequested ? "LifetimeEnded" : "SupersededGeneration", generation }, exception);
             // Window shutdown or a game pack taking over cancels the import; a late result must not be applied.
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
+            RuntimeLog.Write(LogLevel.Error, "StoryLocatorViewModel", "IndexImportFailed", new { generation }, exception);
             if (!_disposed && generation == _indexGeneration) IndexStatus = $"加载失败：{exception.Message}";
         }
         finally
@@ -203,6 +219,7 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
 
     public void Reset()
     {
+        RuntimeLog.Write(LogLevel.Debug, "StoryLocatorViewModel", "LocatorReset", new { reason = "ContextReset", previousHistoryCount = HistoryCount, hasIndex = _locator is not null, isLiveMode = IsLiveMode });
         _locator?.Reset();
         _sessionId = Guid.NewGuid();
         _dialogueId = _sequence = 0;
@@ -213,14 +230,26 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
 
     private void OnDialogueReceived(object? sender, DialogueEvent dialogue)
     {
-        if (_disposed || !IsLiveMode || _locator is null) return;
+        using var scope = RuntimeLog.BeginScope(new LogContext(TextSessionId: dialogue.SessionId.ToString(), DialogueId: dialogue.DialogueId, Sequence: dialogue.Sequence));
+        RuntimeLog.Write(LogLevel.Debug, "StoryLocatorViewModel", "DialogueReceived", new { kind = dialogue.Kind.ToString(), eventSequence = dialogue.Sequence, receivedAt = dialogue.ReceivedAt, hasIndex = _locator is not null, isLiveMode = IsLiveMode });
+        if (_disposed || !IsLiveMode || _locator is null)
+        {
+            string reason = _disposed ? "Disposed" : _locator is null ? "NoStoryIndex" : "LiveModeDisabled";
+            RuntimeLog.Write(LogLevel.Debug, "StoryLocatorViewModel", _locator is null ? "StoryIndexUnavailable" : "LocatorSkipped", new { reason, kind = dialogue.Kind.ToString() });
+            RuntimeLog.Write(LogLevel.Debug, "Binding", "BindingSkipped", new { reason, kind = dialogue.Kind.ToString(), candidateCount = 0 });
+            return;
+        }
         LatestText = dialogue.Text;
         _locator.Process(dialogue);
+        using var locationScope = RuntimeLog.BeginScope(new LogContext(NodeId: CurrentNodeId));
+        RuntimeLog.Write(LogLevel.Debug, "StoryLocatorViewModel", "LocationPublished", new { kind = dialogue.Kind.ToString(), status = LocationStatus.ToString(), nodeId = CurrentNodeId, candidateCount = CurrentLocation.Candidates.Count, candidateIds = RuntimeLog.DetailedText ? CurrentLocation.Candidates.Select(node => node.Id).ToArray() : null, historyCount = HistoryCount, confirmationVersion = ConfirmationVersion, drivesBinding = _drivesBinding });
+        if (!_drivesBinding) RuntimeLog.Write(LogLevel.Debug, "Binding", "BindingSkipped", new { reason = "LocateOnlyIndex", candidateCount = CurrentLocation.Candidates.Count });
         NotifyState();
     }
 
     private void OnContextInvalidated(object? sender, EventArgs args)
     {
+        RuntimeLog.Write(LogLevel.Debug, "StoryLocatorViewModel", "SourceContextInvalidated", new { reason = "TextSourceContextInvalidated", isLiveMode = IsLiveMode, historyCount = HistoryCount });
         if (IsLiveMode && !_disposed) Reset();
     }
 
@@ -241,8 +270,12 @@ public sealed class StoryLocatorViewModel : ObservableObject, IAsyncDisposable
     {
         if (!update) _dialogueId++;
         LatestText = text;
-        _locator!.Process(new(_sessionId, _dialogueId, ++_sequence, _timeProvider.GetUtcNow(),
-            update ? DialogueEventKind.TextUpdated : DialogueEventKind.NewDialogue, text));
+        var dialogue = new DialogueEvent(_sessionId, _dialogueId, ++_sequence, _timeProvider.GetUtcNow(),
+            update ? DialogueEventKind.TextUpdated : DialogueEventKind.NewDialogue, text);
+        using var scope = RuntimeLog.BeginScope(new LogContext(TextSessionId: dialogue.SessionId.ToString(), DialogueId: dialogue.DialogueId, Sequence: dialogue.Sequence));
+        RuntimeLog.Write(LogLevel.Debug, "StoryLocatorViewModel", "ManualDialogueReceived", new { kind = dialogue.Kind.ToString(), length = text.Length, text = RuntimeLog.Text(text) });
+        _locator!.Process(dialogue);
+        using var locationScope = RuntimeLog.BeginScope(new LogContext(NodeId: CurrentNodeId));
         NotifyState();
     }
 

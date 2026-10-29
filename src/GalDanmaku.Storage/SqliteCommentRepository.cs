@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using GalDanmaku.Core.Diagnostics;
 using GalDanmaku.Core;
 using Microsoft.Data.Sqlite;
 
@@ -22,120 +24,194 @@ public sealed class SqliteCommentRepository : ICommentRepository, ILocalLikeRepo
 
     public Task<IReadOnlyList<StoredDanmaku>> LoadAsync(string gameId, string nodeId, CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(gameId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
-        // Microsoft.Data.Sqlite executes synchronously, including its Async APIs.
-        return Task.Run<IReadOnlyList<StoredDanmaku>>(() =>
+        return LogOperationAsync<IReadOnlyList<StoredDanmaku>>("SqliteQuery", new LogContext(GameId: gameId, NodeId: nodeId, OperationId: Guid.NewGuid().ToString("N")), () =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
-            using var connection = new SqliteConnection(_connectionString);
-            connection.Open();
-            InitializeSchema(connection, cancellationToken);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT id, game_id, node_id, text, type, color, font_size, offset_ms, created_utc_ticks
-                FROM danmaku WHERE game_id = $game AND node_id = $node
-                ORDER BY offset_ms, created_utc_ticks, id
-                """;
-            command.Parameters.AddWithValue("$game", gameId);
-            command.Parameters.AddWithValue("$node", nodeId);
-            using SqliteDataReader reader = command.ExecuteReader();
-            var comments = new List<StoredDanmaku>();
-            while (reader.Read())
+            ArgumentException.ThrowIfNullOrWhiteSpace(gameId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
+            // Microsoft.Data.Sqlite executes synchronously, including its Async APIs.
+            return Task.Run<IReadOnlyList<StoredDanmaku>>(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                comments.Add(new StoredDanmaku(Guid.Parse(reader.GetString(0)), reader.GetString(1), reader.GetString(2),
-                    reader.GetString(3), (DanmakuType)reader.GetInt32(4), reader.GetString(5), reader.GetDouble(6),
-                    reader.GetInt64(7), new DateTimeOffset(reader.GetInt64(8), TimeSpan.Zero)));
-            }
+                Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
+                using var connection = new SqliteConnection(_connectionString);
+                connection.Open();
+                InitializeSchema(connection, cancellationToken);
+                using SqliteCommand command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT id, game_id, node_id, text, type, color, font_size, offset_ms, created_utc_ticks
+                    FROM danmaku WHERE game_id = $game AND node_id = $node
+                    ORDER BY offset_ms, created_utc_ticks, id
+                    """;
+                command.Parameters.AddWithValue("$game", gameId);
+                command.Parameters.AddWithValue("$node", nodeId);
+                using SqliteDataReader reader = command.ExecuteReader();
+                var comments = new List<StoredDanmaku>();
+                while (reader.Read())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    comments.Add(new StoredDanmaku(Guid.Parse(reader.GetString(0)), reader.GetString(1), reader.GetString(2),
+                        reader.GetString(3), (DanmakuType)reader.GetInt32(4), reader.GetString(5), reader.GetDouble(6),
+                        reader.GetInt64(7), new DateTimeOffset(reader.GetInt64(8), TimeSpan.Zero)));
+                }
 
-            cancellationToken.ThrowIfCancellationRequested();
-            return comments;
-        }, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                return comments;
+            }, cancellationToken);
+        }, static comments => comments.Count);
     }
 
     public Task SaveAsync(StoredDanmaku comment, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(comment);
-        return Task.Run(() =>
+        return LogOperationAsync("SqliteWrite", new LogContext(GameId: comment?.GameId, NodeId: comment?.NodeId, OperationId: Guid.NewGuid().ToString("N")), () =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
-            using var connection = new SqliteConnection(_connectionString);
-            connection.Open();
-            InitializeSchema(connection, cancellationToken);
-            using SqliteTransaction transaction = connection.BeginTransaction();
-            using SqliteCommand command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = """
-                INSERT INTO danmaku (id, game_id, node_id, text, type, color, font_size, offset_ms, created_utc_ticks)
-                VALUES ($id, $game, $node, $text, $type, $color, $font, $offset, $created)
-                """;
-            command.Parameters.AddWithValue("$id", comment.Id.ToString("D"));
-            command.Parameters.AddWithValue("$game", comment.GameId);
-            command.Parameters.AddWithValue("$node", comment.NodeId);
-            command.Parameters.AddWithValue("$text", comment.Text);
-            command.Parameters.AddWithValue("$type", (int)comment.Type);
-            command.Parameters.AddWithValue("$color", comment.Color);
-            command.Parameters.AddWithValue("$font", comment.FontSize);
-            command.Parameters.AddWithValue("$offset", comment.OffsetMilliseconds);
-            command.Parameters.AddWithValue("$created", comment.CreatedUtc.UtcTicks);
-            cancellationToken.ThrowIfCancellationRequested();
-            command.ExecuteNonQuery();
-            cancellationToken.ThrowIfCancellationRequested();
-            // Once commit succeeds, report success even if cancellation arrives at that boundary.
-            transaction.Commit();
-        }, cancellationToken);
+            ArgumentNullException.ThrowIfNull(comment);
+            return Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
+                using var connection = new SqliteConnection(_connectionString);
+                connection.Open();
+                InitializeSchema(connection, cancellationToken);
+                using SqliteTransaction transaction = connection.BeginTransaction();
+                using SqliteCommand command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    INSERT INTO danmaku (id, game_id, node_id, text, type, color, font_size, offset_ms, created_utc_ticks)
+                    VALUES ($id, $game, $node, $text, $type, $color, $font, $offset, $created)
+                    """;
+                command.Parameters.AddWithValue("$id", comment.Id.ToString("D"));
+                command.Parameters.AddWithValue("$game", comment.GameId);
+                command.Parameters.AddWithValue("$node", comment.NodeId);
+                command.Parameters.AddWithValue("$text", comment.Text);
+                command.Parameters.AddWithValue("$type", (int)comment.Type);
+                command.Parameters.AddWithValue("$color", comment.Color);
+                command.Parameters.AddWithValue("$font", comment.FontSize);
+                command.Parameters.AddWithValue("$offset", comment.OffsetMilliseconds);
+                command.Parameters.AddWithValue("$created", comment.CreatedUtc.UtcTicks);
+                cancellationToken.ThrowIfCancellationRequested();
+                command.ExecuteNonQuery();
+                cancellationToken.ThrowIfCancellationRequested();
+                // Once commit succeeds, report success even if cancellation arrives at that boundary.
+                transaction.Commit();
+            }, cancellationToken);
+        });
     }
 
     public Task<bool> GetLocalLikedAsync(string gameId, string nodeId, Guid commentId, CancellationToken cancellationToken = default)
     {
-        ValidateLocalLikeIdentity(gameId, nodeId, commentId);
-        return Task.Run(() =>
+        return LogOperationAsync<bool>("SqliteLikeQuery", new LogContext(GameId: gameId, NodeId: nodeId, OperationId: Guid.NewGuid().ToString("N")), () =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
-            using var connection = new SqliteConnection(_connectionString);
-            connection.Open();
-            InitializeSchema(connection, cancellationToken);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = "SELECT local_liked FROM danmaku WHERE id=$id AND game_id=$game AND node_id=$node";
-            AddLocalLikeIdentity(command, gameId, nodeId, commentId);
-            object? result = command.ExecuteScalar();
-            cancellationToken.ThrowIfCancellationRequested();
-            return result is long value ? value == 1 : throw MissingLocalLikeComment();
-        }, cancellationToken);
+            ValidateLocalLikeIdentity(gameId, nodeId, commentId);
+            return Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
+                using var connection = new SqliteConnection(_connectionString);
+                connection.Open();
+                InitializeSchema(connection, cancellationToken);
+                using SqliteCommand command = connection.CreateCommand();
+                command.CommandText = "SELECT local_liked FROM danmaku WHERE id=$id AND game_id=$game AND node_id=$node";
+                AddLocalLikeIdentity(command, gameId, nodeId, commentId);
+                object? result = command.ExecuteScalar();
+                cancellationToken.ThrowIfCancellationRequested();
+                return result is long value ? value == 1 : throw MissingLocalLikeComment();
+            }, cancellationToken);
+        }, static _ => 1);
     }
 
     public Task SetLocalLikedAsync(string gameId, string nodeId, Guid commentId, bool liked, CancellationToken cancellationToken = default)
     {
-        ValidateLocalLikeIdentity(gameId, nodeId, commentId);
-        return Task.Run(() =>
+        return LogOperationAsync("SqliteLikeUpsert", new LogContext(GameId: gameId, NodeId: nodeId, OperationId: Guid.NewGuid().ToString("N")), () =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
-            using var connection = new SqliteConnection(_connectionString);
-            connection.Open();
-            InitializeSchema(connection, cancellationToken);
-            using SqliteTransaction transaction = connection.BeginTransaction();
-            using SqliteCommand command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = "UPDATE danmaku SET local_liked=$liked WHERE id=$id AND game_id=$game AND node_id=$node";
-            AddLocalLikeIdentity(command, gameId, nodeId, commentId);
-            command.Parameters.AddWithValue("$liked", liked ? 1 : 0);
-            cancellationToken.ThrowIfCancellationRequested();
-            int affectedRows = command.ExecuteNonQuery();
-            cancellationToken.ThrowIfCancellationRequested();
-            if (affectedRows != 1)
+            ValidateLocalLikeIdentity(gameId, nodeId, commentId);
+            return Task.Run(() =>
             {
-                throw MissingLocalLikeComment();
-            }
+                cancellationToken.ThrowIfCancellationRequested();
+                Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
+                using var connection = new SqliteConnection(_connectionString);
+                connection.Open();
+                InitializeSchema(connection, cancellationToken);
+                using SqliteTransaction transaction = connection.BeginTransaction();
+                using SqliteCommand command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = "UPDATE danmaku SET local_liked=$liked WHERE id=$id AND game_id=$game AND node_id=$node";
+                AddLocalLikeIdentity(command, gameId, nodeId, commentId);
+                command.Parameters.AddWithValue("$liked", liked ? 1 : 0);
+                cancellationToken.ThrowIfCancellationRequested();
+                int affectedRows = command.ExecuteNonQuery();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (affectedRows != 1)
+                {
+                    throw MissingLocalLikeComment();
+                }
 
-            // Once commit succeeds, report success even if cancellation arrives at that boundary.
-            transaction.Commit();
-        }, cancellationToken);
+                // Once commit succeeds, report success even if cancellation arrives at that boundary.
+                transaction.Commit();
+            }, cancellationToken);
+        });
     }
+
+    // The outer boundary keeps argument validation synchronous, as it was before instrumentation.
+    // The observer also sees Task.Run tasks canceled before their delegate starts.
+    private static Task<T> LogOperationAsync<T>(string name, LogContext context, Func<Task<T>> action, Func<T, int> count)
+    {
+        using var scope = RuntimeLog.BeginScope(context);
+        long started = Stopwatch.GetTimestamp();
+        RuntimeLog.Write(LogLevel.Debug, "SQLite", name + "Started");
+        try { return ObserveAsync(action(), name, started, count); }
+        catch (Exception exception)
+        {
+            LogFailure(name, started, exception);
+            throw;
+        }
+    }
+
+    private static Task LogOperationAsync(string name, LogContext context, Func<Task> action)
+    {
+        using var scope = RuntimeLog.BeginScope(context);
+        long started = Stopwatch.GetTimestamp();
+        RuntimeLog.Write(LogLevel.Debug, "SQLite", name + "Started");
+        try { return ObserveAsync(action(), name, started); }
+        catch (Exception exception)
+        {
+            LogFailure(name, started, exception);
+            throw;
+        }
+    }
+
+    private static async Task<T> ObserveAsync<T>(Task<T> operation, string name, long started, Func<T, int> count)
+    {
+        try
+        {
+            T result = await operation.ConfigureAwait(false);
+            RuntimeLog.Write(LogLevel.Debug, "SQLite", name + "Succeeded", new { count = count(result), durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds });
+            return result;
+        }
+        catch (Exception exception)
+        {
+            LogFailure(name, started, exception);
+            throw;
+        }
+    }
+
+    private static async Task ObserveAsync(Task operation, string name, long started)
+    {
+        try
+        {
+            await operation.ConfigureAwait(false);
+            RuntimeLog.Write(LogLevel.Debug, "SQLite", name + "Succeeded", new { count = 1, durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds });
+        }
+        catch (Exception exception)
+        {
+            LogFailure(name, started, exception);
+            throw;
+        }
+    }
+
+    private static void LogFailure(string name, long started, Exception exception) =>
+        RuntimeLog.Write(exception is OperationCanceledException ? LogLevel.Debug : LogLevel.Error, "SQLite",
+            name + (exception is OperationCanceledException ? "Cancelled" : "Failed"),
+            new { durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds }, exception);
 
     private static void ValidateLocalLikeIdentity(string gameId, string nodeId, Guid commentId)
     {

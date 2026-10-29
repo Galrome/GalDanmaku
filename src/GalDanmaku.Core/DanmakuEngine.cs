@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using GalDanmaku.Core.Diagnostics;
 
 namespace GalDanmaku.Core;
 
@@ -20,6 +22,10 @@ public sealed class DanmakuEngine
     private double _layoutWidth;
     private bool _hasDeferredItems;
     private int _nextLane;
+    private long _capacityRejections;
+    private long _viewportRejections;
+    private long _layoutRejections;
+    private long _lastRejectionLog = Stopwatch.GetTimestamp();
 
     public DanmakuEngine() => _readOnlyItems = _items.AsReadOnly();
 
@@ -143,7 +149,7 @@ public sealed class DanmakuEngine
         ValidateNonNegativeFinite(width, nameof(width));
         if (width == 0 || !HasUsableViewport || _items.Count >= MaximumComments)
         {
-            return false;
+            return RecordRejection(_items.Count >= MaximumComments ? "Capacity" : "ViewportOrMeasurement");
         }
 
         int lanes = (int)Math.Min(MaximumComments, Math.Floor((_height * _settings.AreaFraction - 2 * EdgePadding) / LineHeight));
@@ -162,7 +168,7 @@ public sealed class DanmakuEngine
             return true;
         }
 
-        return false;
+        return RecordRejection("Layout");
     }
 
     public bool TryAdd(StoredDanmaku comment, double width)
@@ -177,7 +183,7 @@ public sealed class DanmakuEngine
         ValidateNonNegativeFinite(width, nameof(width));
         if (width == 0 || !HasUsableViewport || _items.Count >= MaximumComments)
         {
-            return false;
+            return RecordRejection(_items.Count >= MaximumComments ? "Capacity" : "ViewportOrMeasurement");
         }
 
         double height = comment.FontSize * 1.6;
@@ -209,7 +215,7 @@ public sealed class DanmakuEngine
 
         if (y + height + EdgePadding > _height * _settings.AreaFraction)
         {
-            return false;
+            return RecordRejection("Layout");
         }
 
         _items.Add(new DanmakuItem(comment.Text, _width, y, width, comment.FontSize, comment.Color, usesDefaultFontSize: false, display: comment));
@@ -245,11 +251,40 @@ public sealed class DanmakuEngine
 
     public void Clear()
     {
+        LogRejections(force: true);
+        RuntimeLog.Write(LogLevel.Debug, "DanmakuEngine", "EngineCleared", new { count = _items.Count });
         _items.Clear();
         _movementOrder.Clear();
         _pausedItem = null;
         _hasDeferredItems = false;
         _nextLane = 0;
+    }
+
+    private bool RecordRejection(string reason)
+    {
+        switch (reason)
+        {
+            case "Capacity": _capacityRejections++; break;
+            case "ViewportOrMeasurement": _viewportRejections++; break;
+            default: _layoutRejections++; break;
+        }
+        LogRejections();
+        return false;
+    }
+
+    private void LogRejections(bool force = false)
+    {
+        if (_capacityRejections == 0 && _viewportRejections == 0 && _layoutRejections == 0) return;
+        if (!force && Stopwatch.GetElapsedTime(_lastRejectionLog).TotalSeconds < 5) return;
+        RuntimeLog.Write(LogLevel.Debug, "DanmakuEngine", "EmissionRejectionSummary", new
+        {
+            capacityRejections = _capacityRejections,
+            viewportOrMeasurementRejections = _viewportRejections,
+            layoutRejections = _layoutRejections,
+            activeCount = _items.Count,
+        });
+        _capacityRejections = _viewportRejections = _layoutRejections = 0;
+        _lastRejectionLog = Stopwatch.GetTimestamp();
     }
 
     internal static void ValidateNonNegativeFinite(double value, string parameterName)

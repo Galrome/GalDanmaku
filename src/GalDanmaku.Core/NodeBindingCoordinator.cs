@@ -1,4 +1,6 @@
 using GalDanmaku.Core.Story;
+using GalDanmaku.Core.Diagnostics;
+using System.Diagnostics;
 
 namespace GalDanmaku.Core;
 
@@ -14,6 +16,7 @@ public sealed class NodeBindingCoordinator : IDisposable
     private long _generation;
     private string? _targetNodeId;
     private long _targetVersion;
+    private LogContext _targetContext = new();
     private CancellationTokenSource? _loadCancellation;
     private bool _pumping;
     private int _activeSends;
@@ -40,11 +43,13 @@ public sealed class NodeBindingCoordinator : IDisposable
         ArgumentNullException.ThrowIfNull(location);
         if (_disposed)
         {
+            RuntimeLog.Write(LogLevel.Debug, "NodeBinding", "NodeBindingSkipped", new { reason = "Disposed" });
             return;
         }
 
         if (location.Status != StoryLocationStatus.Confirmed || location.Node is null)
         {
+            RuntimeLog.Write(LogLevel.Debug, "NodeBinding", "NodeBindingSkipped", new { reason = "Unconfirmed", status = location.Status.ToString() });
             Invalidate();
             return;
         }
@@ -52,6 +57,7 @@ public sealed class NodeBindingCoordinator : IDisposable
         string nodeId = location.Node.Id;
         if (_targetNodeId == nodeId && _targetVersion == confirmationVersion)
         {
+            RuntimeLog.Write(LogLevel.Debug, "NodeBinding", "NodeBindingSkipped", new { reason = "SameConfirmation", nodeId, confirmationVersion });
             return;
         }
 
@@ -60,6 +66,9 @@ public sealed class NodeBindingCoordinator : IDisposable
         CancelLoad();
         _targetNodeId = nodeId;
         _targetVersion = confirmationVersion;
+        _targetContext = RuntimeLog.CurrentContext with { GameId = _gameId, NodeId = nodeId };
+        using var requestScope = RuntimeLog.BeginScope(_targetContext);
+        RuntimeLog.Write(LogLevel.Information, "NodeBinding", "NodeBindRequested", new { confirmationVersion, generation = _generation });
         _loadCancellation = new CancellationTokenSource();
         _session.Unload();
         SetState(NodeBindingState.Loading, null, null);
@@ -75,12 +84,15 @@ public sealed class NodeBindingCoordinator : IDisposable
     {
         if (_disposed || State != NodeBindingState.Failed || _targetNodeId is null)
         {
+            RuntimeLog.Write(LogLevel.Debug, "NodeBinding", "NodeBindingSkipped", new { reason = _disposed ? "Disposed" : "RetryUnavailable", state = State.ToString() });
             return;
         }
 
         _generation++;
         CancelLoad();
         _loadCancellation = new CancellationTokenSource();
+        using var requestScope = RuntimeLog.BeginScope(_targetContext);
+        RuntimeLog.Write(LogLevel.Information, "NodeBinding", "NodeBindRequested", new { reason = "Retry", generation = _generation });
         _session.Unload();
         SetState(NodeBindingState.Loading, null, null);
         if (!_pumping)
@@ -94,6 +106,7 @@ public sealed class NodeBindingCoordinator : IDisposable
     {
         if (!CanSend)
         {
+            RuntimeLog.Write(LogLevel.Debug, "NodeBinding", "NodeSendSkipped", new { reason = "NodeNotConfirmed", state = State.ToString() });
             throw new InvalidOperationException("当前节点未确认，无法发送。");
         }
 
@@ -128,6 +141,7 @@ public sealed class NodeBindingCoordinator : IDisposable
         }
 
         _disposed = true;
+        RuntimeLog.Write(LogLevel.Debug, "NodeBinding", "NodeBindingDisposed", new { nodeId = BoundNodeId });
         _generation++;
         CancelLoad();
         _targetNodeId = null;
@@ -173,17 +187,28 @@ public sealed class NodeBindingCoordinator : IDisposable
                 long generation = _generation;
                 string nodeId = _targetNodeId!;
                 CancellationToken token = _loadCancellation!.Token;
+                // The pump may have started for an older dialogue. Use this request's captured context.
+                using var loadScope = RuntimeLog.BeginScope(_targetContext with { OperationId = Guid.NewGuid().ToString("N") });
+                long started = Stopwatch.GetTimestamp();
+                RuntimeLog.Write(LogLevel.Information, "NodeBinding", "NodeLoadStarted", new { generation });
                 try
                 {
                     await _session.LoadAsync(_gameId, nodeId, token);
                 }
-                catch (Exception) when (generation != _generation || _disposed)
+                catch (Exception exception) when (generation != _generation || _disposed)
                 {
+                    if (exception is OperationCanceledException)
+                        RuntimeLog.Write(LogLevel.Debug, "NodeBinding", "NodeLoadCancelled", new { generation, superseded = true, durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds });
+                    RuntimeLog.Write(exception is OperationCanceledException ? LogLevel.Debug : LogLevel.Warning,
+                        "NodeBinding", "NodeLoadSuperseded", new { generation, disposed = _disposed, durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds }, exception);
                     // Superseded load: its outcome, including failure, no longer matters.
                     continue;
                 }
                 catch (Exception exception)
                 {
+                    RuntimeLog.Write(exception is OperationCanceledException ? LogLevel.Debug : LogLevel.Error,
+                        "NodeBinding", exception is OperationCanceledException ? "NodeLoadCancelled" : "NodeLoadFailed",
+                        new { generation, durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds }, exception);
                     _session.Unload();
                     SetState(NodeBindingState.Failed, null, exception.Message);
                     continue;
@@ -191,12 +216,14 @@ public sealed class NodeBindingCoordinator : IDisposable
 
                 if (generation != _generation)
                 {
+                    RuntimeLog.Write(LogLevel.Debug, "NodeBinding", "NodeLoadSuperseded", new { generation, durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds });
                     _session.Unload();
                     continue;
                 }
 
                 _session.Playback.IsPlaying = true;
                 SetState(NodeBindingState.Active, nodeId, null);
+                RuntimeLog.Write(LogLevel.Information, "NodeBinding", "NodeBound", new { count = _session.Playback.SavedCount, generation, durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds });
             }
         }
         finally

@@ -7,6 +7,7 @@ using GalDanmaku.App.Floating;
 using GalDanmaku.App.ViewModels;
 using GalDanmaku.App.Views;
 using GalDanmaku.App.Windows;
+using GalDanmaku.Core.Diagnostics;
 using FluentWindow = Wpf.Ui.Controls.FluentWindow;
 
 namespace GalDanmaku.App;
@@ -108,6 +109,7 @@ public partial class MainWindow : FluentWindow
         base.OnClosing(e);
         if (_closing) return;
         _closing = true;
+        RuntimeLog.Write(LogLevel.Information, "App", "AppStopRequested");
         _composer.Shutdown();
         IsEnabled = false;
         // The original canceled Closing event must unwind even when disposal completes synchronously.
@@ -119,6 +121,7 @@ public partial class MainWindow : FluentWindow
         }
         catch (Exception exception)
         {
+            RuntimeLog.Write(LogLevel.Error, "App", "ShutdownCleanupFailed", exception: exception);
             // A failing teardown must not leave a disabled window that can never close.
             failure = $"{exception.GetType().Name}：{exception.Message}";
         }

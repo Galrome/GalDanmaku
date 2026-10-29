@@ -6,6 +6,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using GalDanmaku.App.Windows;
 using GalDanmaku.Core;
+using GalDanmaku.Core.Diagnostics;
 
 namespace GalDanmaku.App.Overlay;
 
@@ -20,6 +21,8 @@ public sealed class OverlayWindow : Window
     private WindowTarget? _target;
     private long? _outsideSince;
     private double _actionAnchorOffset;
+    private long? _lastPlacementError;
+    private long _suppressedPlacementErrors;
 
     public event EventHandler? HoveredCommentChanged;
     public event EventHandler? LikeRequested;
@@ -43,6 +46,7 @@ public sealed class OverlayWindow : Window
         Width = 1;
         Height = 1;
         Content = _renderer;
+        RuntimeLog.Write(LogLevel.Information, "Overlay", "OverlayCreated");
     }
 
     public DanmakuSettings Settings
@@ -73,6 +77,7 @@ public sealed class OverlayWindow : Window
         if (!IsVisible)
         {
             Show();
+            RuntimeLog.Write(LogLevel.Information, "Overlay", "OverlayShown", new { hwnd = $"0x{target.Handle:X}", pid = target.ProcessId });
             // WPF can reapply its cached location during Show; native pixels remain authoritative.
             Position(bounds);
         }
@@ -103,6 +108,7 @@ public sealed class OverlayWindow : Window
 
     public void Suspend()
     {
+        if (IsVisible) RuntimeLog.Write(LogLevel.Information, "Overlay", "OverlayHidden", new { reason = "TargetUnavailableOrUnbound" });
         _targetForeground = false;
         _renderer.Stop();
         Hide();
@@ -152,8 +158,9 @@ public sealed class OverlayWindow : Window
                 if (Stopwatch.GetElapsedTime(_outsideSince.Value).TotalMilliseconds >= 100) _renderer.ClearHover();
             }
         }
-        catch (Win32Exception)
+        catch (Win32Exception exception)
         {
+            LogPlacementFailure(exception);
             // A failed action window must never leave a stationary item or an invisible input surface.
             _renderer.ClearHover();
         }
@@ -173,9 +180,25 @@ public sealed class OverlayWindow : Window
             _actionAnchorOffset = NativeMethods.GetCursorPos(out NativeMethods.NativePoint cursor)
                 ? Math.Clamp(cursor.X - textBounds.Left, 0, textBounds.Width) : textBounds.Width / 2;
             try { _actions.Place(textBounds, ScreenBounds(new Rect(_renderer.RenderSize)), textBounds.Left + _actionAnchorOffset); }
-            catch (Win32Exception) { _renderer.ClearHover(); return; }
+            catch (Win32Exception exception)
+            {
+                LogPlacementFailure(exception);
+                _renderer.ClearHover(); return;
+            }
         }
         HoveredCommentChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void LogPlacementFailure(Exception exception)
+    {
+        if (_lastPlacementError is { } last && Stopwatch.GetElapsedTime(last).TotalSeconds < 5)
+        {
+            _suppressedPlacementErrors++;
+            return;
+        }
+        RuntimeLog.Write(LogLevel.Warning, "Overlay", "HoverActionPlacementFailed", new { suppressedSinceLast = _suppressedPlacementErrors }, exception);
+        _lastPlacementError = Stopwatch.GetTimestamp();
+        _suppressedPlacementErrors = 0;
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -190,11 +213,13 @@ public sealed class OverlayWindow : Window
         int error = Marshal.GetLastWin32Error();
         if (previous == nint.Zero && error != 0)
         {
+            RuntimeLog.Write(LogLevel.Error, "Overlay", "OverlayNativeInitializationFailed", new { win32Error = error });
             throw new Win32Exception(error, "无法配置鼠标穿透覆盖层。");
         }
 
         _source = HwndSource.FromHwnd(_handle);
         _source?.AddHook(WindowProcedure);
+        RuntimeLog.Write(LogLevel.Information, "Overlay", "OverlayNativeInitialized", new { hwnd = $"0x{_handle:X}", mouseTransparent = true });
     }
 
     protected override void OnClosed(EventArgs e)
@@ -206,11 +231,13 @@ public sealed class OverlayWindow : Window
         _actions.Shutdown();
         _source?.RemoveHook(WindowProcedure);
         _source = null;
+        RuntimeLog.Write(LogLevel.Information, "Overlay", "OverlayDestroyed");
         base.OnClosed(e);
     }
 
     protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
     {
+        RuntimeLog.Write(LogLevel.Debug, "Overlay", "OverlayDpiChanged", new { previousX = oldDpi.DpiScaleX, previousY = oldDpi.DpiScaleY, currentX = newDpi.DpiScaleX, currentY = newDpi.DpiScaleY });
         _renderer.ClearHover();
         base.OnDpiChanged(oldDpi, newDpi);
     }

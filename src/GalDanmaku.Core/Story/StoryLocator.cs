@@ -1,4 +1,5 @@
 using GalDanmaku.Core.Text;
+using GalDanmaku.Core.Diagnostics;
 
 namespace GalDanmaku.Core.Story;
 
@@ -32,17 +33,31 @@ public sealed class StoryLocator
     public StoryLocation Process(DialogueEvent dialogueEvent)
     {
         ArgumentNullException.ThrowIfNull(dialogueEvent);
+        using var scope = RuntimeLog.BeginScope(new LogContext(TextSessionId: dialogueEvent.SessionId.ToString(), DialogueId: dialogueEvent.DialogueId, Sequence: dialogueEvent.Sequence));
+        RuntimeLog.Write(LogLevel.Debug, "StoryLocator", "DialogueReceived", new { kind = dialogueEvent.Kind.ToString(), eventSequence = dialogueEvent.Sequence, receivedAt = dialogueEvent.ReceivedAt, historyCount = _history.Count, length = dialogueEvent.Text?.Length });
         if (_sessionId != dialogueEvent.SessionId)
         {
-            if (_retiredSessions.Contains(dialogueEvent.SessionId)) return Current;
+            if (_retiredSessions.Contains(dialogueEvent.SessionId))
+            {
+                RuntimeLog.Write(LogLevel.Debug, "StoryLocator", "LocatorSkipped", new { reason = "RetiredSession", historyCount = _history.Count });
+                return Current;
+            }
             if (_sessionId is Guid previousSession) _retiredSessions.Add(previousSession);
-            ResetContext();
+            ResetContext("SessionChanged");
             _sessionId = dialogueEvent.SessionId;
         }
-        if (dialogueEvent.Sequence <= _sequence || dialogueEvent.DialogueId < _dialogueId) return Current;
+        if (dialogueEvent.Sequence <= _sequence || dialogueEvent.DialogueId < _dialogueId)
+        {
+            RuntimeLog.Write(LogLevel.Debug, "StoryLocator", "LocatorSkipped", new { reason = dialogueEvent.Sequence <= _sequence ? "StaleSequence" : "OlderDialogue", lastEventSequence = _sequence, lastDialogueId = _dialogueId, historyCount = _history.Count });
+            return Current;
+        }
         _sequence = dialogueEvent.Sequence;
         bool sameDialogue = dialogueEvent.DialogueId == _dialogueId;
-        if (sameDialogue && dialogueEvent.Kind == DialogueEventKind.NewDialogue) return Current;
+        if (sameDialogue && dialogueEvent.Kind == DialogueEventKind.NewDialogue)
+        {
+            RuntimeLog.Write(LogLevel.Debug, "StoryLocator", "LocatorSkipped", new { reason = "RepeatedNewDialogue", historyCount = _history.Count });
+            return Current;
+        }
         _dialogueId = dialogueEvent.DialogueId;
 
         string text;
@@ -51,21 +66,35 @@ public sealed class StoryLocator
             text = dialogueEvent.Text is null || dialogueEvent.Text.Length > DialogueProcessor.MaximumTextLength
                 ? string.Empty : TextNormalizer.Normalize(dialogueEvent.Text);
         }
-        catch (ArgumentException) { text = string.Empty; }
+        catch (ArgumentException exception)
+        {
+            RuntimeLog.Write(LogLevel.Warning, "StoryLocator", "InvalidDialogueText", new { reason = "NormalizationRejected" }, exception);
+            text = string.Empty;
+        }
 
-        if (sameDialogue && _history.Count > 0 && _history[^1].Text == text) return Current;
+        if (sameDialogue && _history.Count > 0 && _history[^1].Text == text)
+        {
+            RuntimeLog.Write(LogLevel.Debug, "StoryLocator", "LocatorSkipped", new { reason = "SameDialogueText", historyCount = _history.Count });
+            return Current;
+        }
         IReadOnlyList<StoryNode> globalCandidates = _index.FindPrefix(text);
+        RuntimeLog.Write(LogLevel.Debug, "StoryLocator", "CandidatesFound", new { candidateCount = globalCandidates.Count, candidateIds = RuntimeLog.DetailedText ? globalCandidates.Select(node => node.Id).ToArray() : null, length = text.Length, normalized = RuntimeLog.Text(text) });
         if (globalCandidates.Count == 0)
         {
+            RuntimeLog.Write(LogLevel.Debug, "StoryLocator", "HistoryReset", new { reason = "TextOutsideIndex", previousHistoryCount = _history.Count });
             _history.Clear();
             _confirmedAt = null;
-            return Current = Unknown("当前文本不在索引中；已清除路线上下文。");
+            return ReportLocation(Unknown("当前文本不在索引中；已清除路线上下文。"), "TextOutsideIndex");
         }
 
         var observation = new Observation(text, globalCandidates);
         if (sameDialogue && _history.Count > 0) _history[^1] = observation;
         else _history.Add(observation);
-        if (_history.Count > MaximumHistoryCount) _history.RemoveAt(0);
+        if (_history.Count > MaximumHistoryCount)
+        {
+            _history.RemoveAt(0);
+            RuntimeLog.Write(LogLevel.Debug, "StoryLocator", "HistoryTrimmed", new { reason = "MaximumHistoryCount", historyCount = _history.Count });
+        }
 
         IReadOnlyList<StoryNode> candidates = MatchHistory();
         StoryLocation next;
@@ -86,17 +115,18 @@ public sealed class StoryLocator
             next = new(StoryLocationStatus.Ambiguous, null, candidates,
                 incomplete ? "文本可能仍在逐字输出，等待完整文本。" : "存在多个剧情节点，等待更多上下文。");
         }
-        return Current = next;
+        return ReportLocation(next, next.Status == StoryLocationStatus.Confirmed ? "FullTextAndContext" : candidates.Any(node => node.NormalizedText != text) ? "IncompleteText" : "MultipleCandidates");
     }
 
     public void Reset()
     {
         _retiredSessions.Clear();
-        ResetContext();
+        ResetContext("ExplicitReset");
     }
 
-    private void ResetContext()
+    private void ResetContext(string reason)
     {
+        RuntimeLog.Write(LogLevel.Debug, "StoryLocator", "HistoryReset", new { reason, previousHistoryCount = _history.Count, previousSessionId = _sessionId, previousDialogueId = _dialogueId, previousEventSequence = _sequence });
         _history.Clear();
         _sessionId = null;
         _dialogueId = _sequence = 0;
@@ -116,6 +146,7 @@ public sealed class StoryLocator
             {
                 // A save load or missing section can invalidate every old path. Reacquire from this text.
                 // Keep observations so a correction of the current dialogue can reconsider its predecessor.
+                RuntimeLog.Write(LogLevel.Debug, "StoryLocator", "ContextDisconnected", new { reason = "NoReachableCandidate", historyPosition = i, historyCount = _history.Count, previousCandidateCount = candidates.Count, currentCandidateCount = _history[i].Candidates.Count });
                 candidates = _history[i].Candidates;
             }
         }
@@ -130,6 +161,20 @@ public sealed class StoryLocator
         // Permit one missed node, but never rank a direct path above an equally possible skipped path.
         foreach (string id in direct) reachable.UnionWith(_index.Nodes[id].NextIds);
         return reachable;
+    }
+
+    private StoryLocation ReportLocation(StoryLocation next, string reason)
+    {
+        bool changed = Current.Status != next.Status || Current.Node?.Id != next.Node?.Id;
+        using var scope = RuntimeLog.BeginScope(new LogContext(NodeId: next.Node?.Id));
+        RuntimeLog.Write(changed ? LogLevel.Information : LogLevel.Debug, "StoryLocator", "LocationEvaluated", new
+        {
+            previousStatus = Current.Status.ToString(), status = next.Status.ToString(), reason,
+            nodeId = next.Node?.Id, candidateCount = next.Candidates.Count,
+            candidateIds = RuntimeLog.DetailedText ? next.Candidates.Select(node => node.Id).ToArray() : null,
+            historyCount = _history.Count, confirmationVersion = ConfirmationVersion, stateChanged = changed
+        });
+        return Current = next;
     }
 
     private static StoryLocation Unknown(string reason) => new(StoryLocationStatus.Unknown, null, [], reason);

@@ -1,0 +1,12 @@
+{
+  "MinimumLevel": "Information",
+  "DetailedText": false,
+  "Directory": null,
+  "MaxFileBytes": 10485760,
+  "RetentionDays": 7,
+  "QueueCapacity": 4096,
+  "MaxTextLength": 4096,
+  "MaxDataBytes": 32768,
+  "MaxFiles": 64,
+  "MaxTotalBytes": 268435456
+}

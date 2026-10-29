@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.IO;
 using Microsoft.Win32.SafeHandles;
+using GalDanmaku.Core.Diagnostics;
 
 namespace GalDanmaku.App.Windows;
 
@@ -34,6 +35,9 @@ public static class WindowCatalog
 
         // A window may disappear or change owner while the process is being queried.
         EnsureWindowIdentity(target);
+        RuntimeLog.Write(path is null ? LogLevel.Warning : LogLevel.Information, "Window", path is null ? "ProcessIdentityUnavailable" : "ProcessIdentityRead",
+            new { hwnd = $"0x{target.Handle:X}", pid = target.ProcessId, threadId = target.ThreadId,
+                executableName = path is null ? null : Path.GetFileName(path), executablePath = path, error });
         return target with
         {
             ProcessName = path is not null ? Path.GetFileNameWithoutExtension(path) : target.ProcessName,

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using GalDanmaku.Core.Diagnostics;
 
 namespace GalDanmaku.Core.GamePacks;
 
@@ -39,21 +40,30 @@ public sealed class LocalGameMappings
             if (!string.Equals(Path.GetFileName(normalized), game.ExecutableName, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("本地游戏映射的 executableName 与 executablePath 不一致。");
         }
+        RuntimeLog.Write(LogLevel.Information, "GameMapping", "MappingConfigurationLoaded", new { path, count = file.Games.Count, file.Version });
         return new LocalGameMappings(file.Games.AsReadOnly());
     }
 
     public LocalGameMatch Match(string? executablePath)
     {
         if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            RuntimeLog.Write(LogLevel.Warning, "GameMapping", "GameRecognitionSkipped", new { reason = "ProcessPathUnavailable" });
             return new(LocalGameMatchStatus.Unknown, null, "无法读取进程路径，未识别游戏。");
+        }
         string normalized = NormalizePath(executablePath);
         LocalGameMapping[] candidates = _games.Where(game => string.Equals(NormalizePath(game.ExecutablePath), normalized,
             StringComparison.OrdinalIgnoreCase)).ToArray();
+        bool exactPath = candidates.Length > 0;
         if (candidates.Length == 0)
         {
             string name = Path.GetFileName(normalized);
             candidates = _games.Where(game => string.Equals(game.ExecutableName, name, StringComparison.OrdinalIgnoreCase)).ToArray();
         }
+        RuntimeLog.Write(candidates.Length == 1 ? LogLevel.Information : LogLevel.Warning, "GameMapping",
+            candidates.Length == 1 ? "GameMappingMatched" : candidates.Length > 1 ? "GameMappingAmbiguous" : "GameMappingUnknown",
+            new { executablePath = normalized, method = exactPath ? "FullPath" : "ExecutableName", candidateCount = candidates.Length,
+                gameId = candidates.Length == 1 ? candidates[0].Id : null });
         return candidates.Length switch
         {
             1 => new(LocalGameMatchStatus.Matched, candidates[0], "已识别游戏。"),
