@@ -28,6 +28,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     private readonly Func<string, CancellationToken, Task<LoadedGamePack>> _loader;
     private readonly IReadOnlyList<string> _roots;
     private string _mappingPath;
+    private bool _explicitMappingPath;
     private readonly bool _developerSession;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly List<Task> _inflight = [];
@@ -58,8 +59,8 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         _loader = loader ?? GamePackLoader.LoadAsync;
         _roots = roots ?? [];
         _developerSession = developerSession;
-        _mappingPath = mappingPath ?? Environment.GetEnvironmentVariable("GALDANMAKU_GAME_MAPPING_FILE")
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "game-mappings.local.json");
+        _explicitMappingPath = mappingPath is not null;
+        _mappingPath = mappingPath ?? ResolveMappingPath();
         _story.LocationChanged += OnLocationChanged;
         RefreshCommand = new AsyncRelayCommand(RefreshAsync, () => !_disposed && !_isRefreshing);
         LoadCommand = new AsyncRelayCommand(LoadSelectedAsync, () => !_disposed && SelectedPack is { IsSelectable: true } item && CanLoadItem(item),
@@ -78,7 +79,19 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     public bool HasActivePack => _activePack is not null;
     public bool IsLoading => _isLoading;
     public string GameIdentity => string.IsNullOrEmpty(_identitySummary) ? "尚未识别游戏" : _identitySummary;
-    public string MappingPath { get => _mappingPath; set => SetProperty(ref _mappingPath, value); }
+    public string MappingPath
+    {
+        get => _mappingPath;
+        set { _explicitMappingPath = true; SetProperty(ref _mappingPath, value); }
+    }
+
+    private static string ResolveMappingPath()
+    {
+        string userDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku");
+        string settingsDirectory = Environment.GetEnvironmentVariable("GALDANMAKU_SETTINGS_DIRECTORY") ?? userDirectory;
+        return LocalGameMappings.ResolveConfigurationPath(settingsDirectory, userDirectory,
+            Environment.GetEnvironmentVariable("GALDANMAKU_GAME_MAPPING_FILE"));
+    }
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public string ActiveSummary => _activePack is { } pack ? $"{pack.Name} · v{pack.Version} · {pack.GameId}"
         : string.IsNullOrEmpty(_identitySummary) ? "未加载游戏包" : $"{_identitySummary} · 未加载剧情包";
@@ -150,6 +163,7 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
     public Task BindWindowAsync(string? executablePath, string? identityError = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_explicitMappingPath) SetProperty(ref _mappingPath, ResolveMappingPath(), nameof(MappingPath));
         _windowBound = true;
         if (!_developerSession) RuntimeLog.SetGameId(null);
         RuntimeLog.Write(LogLevel.Information, "GamePack", "GameRecognitionStarted", new { executablePath, identityError });
@@ -247,6 +261,15 @@ public sealed class GamePackViewModel : ObservableObject, IAsyncDisposable
         catch (OperationCanceledException) when (IsStale(generation))
         {
             RuntimeLog.Write(LogLevel.Debug, "GamePack", "GameRecognitionCancelled", new { generation, reason = _disposed ? "ApplicationClosing" : "Superseded" });
+        }
+        catch (IOException exception) when (_requiredGameId is null && exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            RuntimeLog.Write(LogLevel.Warning, "GameMapping", "MappingConfigurationMissing", new { path = _mappingPath }, exception);
+            if (!IsStale(generation))
+            {
+                _identitySummary = "未识别游戏";
+                UseUnindexedLuna("尚无本地游戏识别配置，当前仅绑定游戏窗口。");
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException)
         {

@@ -73,8 +73,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         var roots = new List<string> { Path.Combine(AppContext.BaseDirectory, developerSession ? "developer-fixtures/gamepacks" : "gamepacks") };
         string userPacks = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "gamepacks");
         if (!developerSession) roots.Add(userPacks);
-        Pack = new GamePackViewModel(_session, TextSource, Story, roots: roots, developerSession: developerSession,
-            mappingPath: developerSession ? null : LoadMappingPath());
+        Pack = new GamePackViewModel(_session, TextSource, Story, roots: roots, developerSession: developerSession);
         InitializeDemo();
         Pack.ActiveChanged += OnPackActiveChanged;
         TextSource.PropertyChanged += OnTextSourceChanged;

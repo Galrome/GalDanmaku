@@ -20,6 +20,28 @@ public sealed class LocalGameMappings
 
     private LocalGameMappings(IReadOnlyList<LocalGameMapping> games) => _games = games;
 
+    public static string ResolveConfigurationPath(string settingsDirectory, string userDirectory, string? configuredPath = null)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredPath)) return configuredPath.Trim();
+        // A development settings override may contain only Luna settings. Keep the user's existing
+        // mapping preference available instead of falling back to an unrelated missing default file.
+        foreach (string directory in new[] { settingsDirectory, userDirectory }.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            string pointer = Path.Combine(directory, "game-mapping-location.txt");
+            try
+            {
+                if (!File.Exists(pointer)) continue;
+                string path = File.ReadAllText(pointer).Trim();
+                if (path.Length > 0) return Path.GetFullPath(path, Path.GetFullPath(directory));
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                RuntimeLog.Write(LogLevel.Warning, "GameMapping", "MappingLocationReadFailed", new { pointer }, error);
+            }
+        }
+        return Path.Combine(settingsDirectory, "game-mappings.local.json");
+    }
+
     public static async Task<LocalGameMappings> LoadAsync(string path, CancellationToken cancellationToken = default)
     {
         await using FileStream stream = File.OpenRead(path);
