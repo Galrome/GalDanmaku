@@ -1,0 +1,43 @@
+<UserControl x:Class="GalDanmaku.App.Views.TextSourcePanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
+  <Border Padding="18" CornerRadius="10" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+    <StackPanel>
+      <TextBlock Text="实时文本接收" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12" />
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+        <ComboBox x:Name="TextSourceSelector" AutomationProperties.AutomationId="TextSourceSelector" AutomationProperties.Name="文本来源"
+                  ItemsSource="{Binding Sources}" SelectedItem="{Binding SelectedSource}" DisplayMemberPath="Label" IsEnabled="{Binding CanEdit}" Margin="0,0,12,0" />
+        <ui:Button x:Name="StartTextSourceButton" AutomationProperties.AutomationId="StartTextSourceButton" Grid.Column="1" Content="开始接收" Appearance="Primary" Command="{Binding StartCommand}" Margin="0,0,8,0" />
+        <ui:Button x:Name="StopTextSourceButton" AutomationProperties.AutomationId="StopTextSourceButton" Grid.Column="2" Content="停止" Command="{Binding StopCommand}" />
+      </Grid>
+      <TextBlock Text="LunaTranslator 原文 WebSocket 地址" Margin="0,12,0,5" FontSize="12" />
+      <TextBox x:Name="TextEndpointInput" AutomationProperties.AutomationId="TextEndpointInput" AutomationProperties.Name="原文 WebSocket 地址"
+               Text="{Binding Endpoint, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEdit}" MaxLength="2048" />
+      <Expander Header="重连与逐字合并设置（毫秒）" Margin="0,8,0,0">
+        <StackPanel Margin="0,8,0,8">
+          <UniformGrid Columns="4">
+            <StackPanel Margin="0,0,8,0"><TextBlock Text="初始重连" Margin="0,0,0,4" /><TextBox x:Name="InitialRetryInput" AutomationProperties.AutomationId="InitialRetryInput" AutomationProperties.Name="初始重连毫秒" Text="{Binding InitialRetry, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEdit}" MaxLength="6" /></StackPanel>
+            <StackPanel Margin="0,0,8,0"><TextBlock Text="最大重连" Margin="0,0,0,4" /><TextBox x:Name="MaximumRetryInput" AutomationProperties.AutomationId="MaximumRetryInput" AutomationProperties.Name="最大重连毫秒" Text="{Binding MaximumRetry, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEdit}" MaxLength="6" /></StackPanel>
+            <StackPanel Margin="0,0,8,0"><TextBlock Text="连接超时" Margin="0,0,0,4" /><TextBox x:Name="ConnectTimeoutInput" AutomationProperties.AutomationId="ConnectTimeoutInput" AutomationProperties.Name="连接超时毫秒" Text="{Binding ConnectTimeout, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEdit}" MaxLength="6" /></StackPanel>
+            <StackPanel><TextBlock Text="逐字合并间隔" Margin="0,0,0,4" /><TextBox x:Name="MergeGapInput" AutomationProperties.AutomationId="MergeGapInput" AutomationProperties.Name="逐字合并间隔毫秒" Text="{Binding MergeGap, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEdit}" MaxLength="5" /></StackPanel>
+          </UniformGrid>
+          <TextBlock Text="{Binding ConfigurationNotice}" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+        </StackPanel>
+      </Expander>
+      <TextBlock x:Name="TextConnectionStatus" AutomationProperties.AutomationId="TextConnectionStatus" Text="{Binding Status}" TextWrapping="Wrap" Margin="0,10,0,8" />
+      <WrapPanel Margin="0,0,0,8">
+        <TextBlock x:Name="RawTextCount" AutomationProperties.AutomationId="RawTextCount" Text="{Binding RawCount, StringFormat=原始文本 {0}}" Margin="0,0,16,0" />
+        <TextBlock x:Name="NewDialogueCount" AutomationProperties.AutomationId="NewDialogueCount" Text="{Binding NewCount, StringFormat=新对话 {0}}" Margin="0,0,16,0" />
+        <TextBlock x:Name="UpdatedTextCount" AutomationProperties.AutomationId="UpdatedTextCount" Text="{Binding UpdateCount, StringFormat=更新 {0}}" Margin="0,0,16,0" />
+        <TextBlock x:Name="FilteredTextCount" AutomationProperties.AutomationId="FilteredTextCount" Text="{Binding FilteredCount, StringFormat=过滤 {0}}" />
+      </WrapPanel>
+      <TextBlock x:Name="LatestTextEvent" AutomationProperties.AutomationId="LatestTextEvent" Text="{Binding LatestEvent}" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+      <TextBox x:Name="LatestReceivedText" AutomationProperties.AutomationId="LatestReceivedText" AutomationProperties.Name="最新归一化原文"
+               Text="{Binding LatestText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" Height="82" VerticalScrollBarVisibility="Auto" />
+      <TextBlock Margin="0,10,0,0" FontSize="12" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                 Text="按相邻文本与时间间隔启发式识别：相同台词可能被过滤，前缀相似的独立台词可能合并。会话内编号不是剧情节点。原文接收独立于窗口前台状态，不切换下方模拟节点或弹幕时间线。" />
+    </StackPanel>
+  </Border>
+</UserControl>

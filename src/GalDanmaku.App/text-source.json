@@ -1,0 +1,7 @@
+{
+  "Endpoint": "ws://127.0.0.1:2333/api/ws/text/origin",
+  "InitialRetryMilliseconds": 500,
+  "MaximumRetryMilliseconds": 10000,
+  "ConnectTimeoutMilliseconds": 5000,
+  "MergeGapMilliseconds": 1500
+}

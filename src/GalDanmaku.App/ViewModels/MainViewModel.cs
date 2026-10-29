@@ -1,18 +1,20 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Text.Json;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using GalDanmaku.App.Overlay;
 using GalDanmaku.App.Windows;
 using GalDanmaku.Core;
+using GalDanmaku.Core.Text;
 using GalDanmaku.Storage;
 using Microsoft.Data.Sqlite;
 
 namespace GalDanmaku.App.ViewModels;
 
-public sealed class MainViewModel : ObservableObject, IDisposable
+public sealed class MainViewModel : ObservableObject, IAsyncDisposable
 {
     private readonly WindowTracker _tracker = new();
     private readonly OverlayWindow _overlay;
@@ -36,6 +38,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
+        TextSourceOptions textOptions = new();
+        string configNotice = "界面修改仅本次运行有效；启动默认值读取程序目录的 text-source.json。";
+        try { textOptions = TextSourceOptions.Load(Path.Combine(AppContext.BaseDirectory, "text-source.json")); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        { configNotice = "text-source.json 读取或校验失败，已使用内置默认值；原文件未改动。可在此调整设置后开始。"; }
+        Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+        TextSource = new TextSourceViewModel(textOptions, (action, token) => dispatcher.InvokeAsync(action, DispatcherPriority.Background, token).Task)
+        { ConfigurationNotice = configNotice };
         string databasePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GalDanmaku", "danmaku.db");
         _session = new LocalCommentSession(new SqliteCommentRepository(databasePath));
         _overlay = new OverlayWindow(_session.Playback);
@@ -60,6 +70,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     public ObservableCollection<WindowTarget> Windows { get; } = [];
+    public TextSourceViewModel TextSource { get; }
     public IReadOnlyList<DisplayArea> Areas { get; }
     public IRelayCommand RefreshCommand { get; }
     public IRelayCommand BindCommand { get; }
@@ -180,7 +191,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         if (_disposed)
         {
@@ -190,6 +201,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _disposed = true;
         _nodeClock.Stop();
         _nodeClock.Tick -= OnNodeClockTick;
+        await TextSource.DisposeAsync();
         _session.Dispose();
         _tracker.Changed -= OnWindowChanged;
         _tracker.Dispose();

@@ -11,5 +11,6 @@
     <ProjectReference Include="../GalDanmaku.Core/GalDanmaku.Core.csproj" />
     <ProjectReference Include="../GalDanmaku.Storage/GalDanmaku.Storage.csproj" />
     <Content Include="../../licenses/**/*.txt" Link="licenses/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="text-source.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

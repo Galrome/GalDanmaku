@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using GalDanmaku.App.ViewModels;
 using Wpf.Ui.Controls;
 
@@ -6,6 +7,8 @@ namespace GalDanmaku.App;
 public partial class MainWindow : FluentWindow
 {
     private readonly MainViewModel _viewModel;
+    private bool _closing;
+    private bool _readyToClose;
 
     public MainWindow()
     {
@@ -15,9 +18,18 @@ public partial class MainWindow : FluentWindow
         Loaded += (_, _) => _viewModel.InitializeCommand.Execute(null);
     }
 
-    protected override void OnClosed(EventArgs e)
+    protected override async void OnClosing(CancelEventArgs e)
     {
-        _viewModel.Dispose();
-        base.OnClosed(e);
+        if (_readyToClose) { base.OnClosing(e); return; }
+        e.Cancel = true;
+        base.OnClosing(e);
+        if (_closing) return;
+        _closing = true;
+        IsEnabled = false;
+        // The original canceled Closing event must unwind even when disposal completes synchronously.
+        await Task.Yield();
+        await _viewModel.DisposeAsync();
+        _readyToClose = true;
+        Close();
     }
 }
